@@ -1,0 +1,2 @@
+-- Demo DB schema — will be populated later
+-- placeholder for MVP

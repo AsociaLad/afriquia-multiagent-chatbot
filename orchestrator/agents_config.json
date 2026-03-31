@@ -1,0 +1,26 @@
+[
+  {
+    "agent_type": "sql",
+    "host": "localhost",
+    "port": 8010,
+    "path": "/sql/query",
+    "enabled": true,
+    "description": "Données structurées : prix, commandes, livraisons, stocks, factures. Exemples : combien coûte le gasoil, où en est ma commande, quel est le montant de ma facture, approvisionnement en carburant"
+  },
+  {
+    "agent_type": "rag",
+    "host": "localhost",
+    "port": 8010,
+    "path": "/rag/query",
+    "enabled": true,
+    "description": "Documentation technique : normes, fiches carburant, FAQ, procédures. Exemples : quelles sont les règles de sécurité, exigences pour le transport de carburant, spécifications du diesel EN590"
+  },
+  {
+    "agent_type": "location",
+    "host": "localhost",
+    "port": 8010,
+    "path": "/location/query",
+    "enabled": true,
+    "description": "Géolocalisation : stations proches, itinéraires, adresses. Exemples : où se ravitailler près de chez moi, trouver une station à Casablanca, station la plus proche"
+  }
+]

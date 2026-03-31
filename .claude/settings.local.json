@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_router.py tests/test_cache.py -v)",
+      "Bash(python -m pytest tests/test_pipeline.py -v)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -c \"from huggingface_hub import constants; print\\(constants.HF_HUB_CACHE\\)\")",
+      "Bash(curl -s -X POST http://localhost:8000/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Combien coute un approvisionnement en carburant pour ce mois ?\"\"}\")",
+      "Bash(curl -s -X POST http://localhost:8000/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Je veux me ravitailler pres de chez moi a Casablanca\"\"}\")",
+      "Bash(curl -s -X POST http://localhost:8000/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Quelles sont les regles et exigences pour le transport de carburant ?\"\"}\")",
+      "Bash(python -c \":*)"
+    ]
+  }
+}
