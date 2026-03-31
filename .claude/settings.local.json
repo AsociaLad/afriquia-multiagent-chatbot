@@ -8,7 +8,27 @@
       "Bash(curl -s -X POST http://localhost:8000/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Combien coute un approvisionnement en carburant pour ce mois ?\"\"}\")",
       "Bash(curl -s -X POST http://localhost:8000/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Je veux me ravitailler pres de chez moi a Casablanca\"\"}\")",
       "Bash(curl -s -X POST http://localhost:8000/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Quelles sont les regles et exigences pour le transport de carburant ?\"\"}\")",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(pip install:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker exec:*)",
+      "Bash(grep -v \"^$\")",
+      "Bash(docker restart:*)",
+      "Bash(timeout 3)",
+      "Bash(netstat -aon)",
+      "Bash(findstr :5432)",
+      "Bash(tasklist /FI \"PID eq 21268\" /FO TABLE)",
+      "Bash(tasklist /FI \"PID eq 7512\" /FO TABLE)",
+      "Bash(tasklist //FI \"PID eq 21268\" //FO TABLE)",
+      "Bash(tasklist //FI \"PID eq 7512\" //FO TABLE)",
+      "Bash(findstr :5433)",
+      "Bash(python -m uvicorn app.main:app --port 8006 --host 0.0.0.0)",
+      "Bash(curl -s http://localhost:8006/health)",
+      "Bash(curl -s -X POST http://localhost:8006/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Quel est le prix du gazoil ?\"\"}\")",
+      "Bash(curl -s -X POST http://localhost:8006/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Combien de commandes par statut ?\"\"}\")",
+      "Bash(curl -s -X POST http://localhost:8006/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Quelles sont les reclamations ouvertes ?\"\"}\")",
+      "Bash(python -m pytest tests/test_sql_integration.py -v)",
+      "Bash(python -m pytest tests/test_router.py -v)"
     ]
   }
 }

@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-afriquia_dev}
       POSTGRES_DB: ${POSTGRES_DB:-chatbot_db}
     ports:
-      - "5432:5432"
+      - "5433:5432"       # 5433 on host → avoids conflict with local PostgreSQL
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped

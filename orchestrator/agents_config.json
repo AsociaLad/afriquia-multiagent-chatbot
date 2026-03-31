@@ -2,10 +2,10 @@
   {
     "agent_type": "sql",
     "host": "localhost",
-    "port": 8010,
-    "path": "/sql/query",
+    "port": 8006,
+    "path": "/query",
     "enabled": true,
-    "description": "Données structurées : prix, commandes, livraisons, stocks, factures. Exemples : combien coûte le gasoil, où en est ma commande, quel est le montant de ma facture, approvisionnement en carburant"
+    "description": "Données structurées : prix, commandes, livraisons, stocks, factures, réclamations, clients. Exemples : combien coûte le gasoil, où en est ma commande, quelles réclamations sont ouvertes, liste des clients"
   },
   {
     "agent_type": "rag",

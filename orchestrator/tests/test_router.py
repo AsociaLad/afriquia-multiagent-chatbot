@@ -39,6 +39,18 @@ def test_location_station_casablanca():
     assert conf >= 0.5
 
 
+def test_sql_reclamation_sans_accent():
+    agents, conf = route_by_rules("Quelles sont les reclamations ouvertes ?", AGENT_TYPES)
+    assert "sql" in agents
+    assert conf >= 0.8
+
+
+def test_sql_reclamation_avec_accent():
+    agents, conf = route_by_rules("Affiche les réclamations en cours", AGENT_TYPES)
+    assert "sql" in agents
+    assert conf >= 0.8
+
+
 def test_unknown_query():
     agents, conf = route_by_rules("Bonjour, comment ça va ?", AGENT_TYPES)
     assert conf < 0.5

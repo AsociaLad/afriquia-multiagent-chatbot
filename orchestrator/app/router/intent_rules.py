@@ -11,6 +11,8 @@ INTENT_PATTERNS: dict[str, list[tuple[re.Pattern, float]]] = {
         (re.compile(r"\bfacture[s]?\b", re.I), 0.8),
         (re.compile(r"\bstock[s]?\b", re.I), 0.7),
         (re.compile(r"\bgasoil|gazoil|diesel|essence\b", re.I), 0.6),
+        (re.compile(r"\br[ée]clamation[s]?\b", re.I), 0.8),
+        (re.compile(r"\bclient[s]?\b", re.I), 0.6),
         (re.compile(r"\bcombien\b", re.I), 0.5),
         (re.compile(r"\bcoût\b", re.I), 0.6),
     ],
