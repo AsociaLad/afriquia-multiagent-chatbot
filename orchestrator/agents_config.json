@@ -10,8 +10,8 @@
   {
     "agent_type": "rag",
     "host": "localhost",
-    "port": 8010,
-    "path": "/rag/query",
+    "port": 8005,
+    "path": "/query",
     "enabled": true,
     "description": "Documentation technique : normes, fiches carburant, FAQ, procédures. Exemples : quelles sont les règles de sécurité, exigences pour le transport de carburant, spécifications du diesel EN590"
   },
