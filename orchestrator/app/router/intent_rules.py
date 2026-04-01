@@ -13,6 +13,9 @@ INTENT_PATTERNS: dict[str, list[tuple[re.Pattern, float]]] = {
         (re.compile(r"\bgasoil|gazoil|diesel|essence\b", re.I), 0.6),
         (re.compile(r"\br[ée]clamation[s]?\b", re.I), 0.8),
         (re.compile(r"\bclient[s]?\b", re.I), 0.6),
+        # "client(s)" + ville/habiter → SQL data query, not location
+        (re.compile(r"\bclient[s]?\b.*\b(ville|habite|habitent|[àa]\s+\w{3,})\b", re.I), 0.85),
+        (re.compile(r"\b(habite|habitent)\b", re.I), 0.75),
         (re.compile(r"\bcombien\b", re.I), 0.5),
         (re.compile(r"\bcoût\b", re.I), 0.6),
     ],
@@ -33,6 +36,8 @@ INTENT_PATTERNS: dict[str, list[tuple[re.Pattern, float]]] = {
         (re.compile(r"\bitinéraire[s]?\b", re.I), 0.8),
         (re.compile(r"\blocalisation\b", re.I), 0.8),
         (re.compile(r"\bkilomètre|km\b", re.I), 0.6),
-        (re.compile(r"\bcasablanca|rabat|tanger|marrakech|fès|agadir\b", re.I), 0.5),
+        # Villes seules ne suffisent plus ; elles doivent accompagner un mot location
+        (re.compile(r"\b(station|proche|ravitailler|itinéraire)\b.*\b(casablanca|rabat|tanger|marrakech|fès|agadir)\b", re.I), 0.85),
+        (re.compile(r"\b(casablanca|rabat|tanger|marrakech|fès|agadir)\b.*\b(station|proche|ravitailler|itinéraire)\b", re.I), 0.85),
     ],
 }

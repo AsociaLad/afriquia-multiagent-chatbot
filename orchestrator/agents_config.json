@@ -5,7 +5,7 @@
     "port": 8006,
     "path": "/query",
     "enabled": true,
-    "description": "Données structurées : prix, commandes, livraisons, stocks, factures, réclamations, clients. Exemples : combien coûte le gasoil, où en est ma commande, quelles réclamations sont ouvertes, liste des clients"
+    "description": "Données structurées : prix, commandes, livraisons, stocks, factures, réclamations, clients, villes. Exemples : combien coûte le gasoil, où en est ma commande, quelles réclamations sont ouvertes, quels clients habitent à Casablanca, clients par ville"
   },
   {
     "agent_type": "rag",

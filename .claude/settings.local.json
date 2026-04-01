@@ -28,7 +28,10 @@
       "Bash(curl -s -X POST http://localhost:8006/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Combien de commandes par statut ?\"\"}\")",
       "Bash(curl -s -X POST http://localhost:8006/query -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Quelles sont les reclamations ouvertes ?\"\"}\")",
       "Bash(python -m pytest tests/test_sql_integration.py -v)",
-      "Bash(python -m pytest tests/test_router.py -v)"
+      "Bash(python -m pytest tests/test_router.py -v)",
+      "Bash(python -m pytest tests/test_sql_cleaner.py tests/test_sql_validator.py -v)",
+      "Bash(python -m pytest tests/test_sql_agent.py -v)",
+      "Bash(find . -maxdepth 3 -not -path ./.venv/* -not -path ./.git/* -not -path */.pytest_cache/* -not -path */__pycache__/* -type d)"
     ]
   }
 }

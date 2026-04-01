@@ -1,6 +1,5 @@
 # Guide de presentation -- Plateforme Afriquia/AlloGaz
 
-> Document destine a l'encadrant de PFE.
 > Derniere mise a jour : mars 2026.
 
 ---
@@ -47,7 +46,7 @@ L'architecture cible complete (decrite dans le document de specification) compre
 | Qdrant | Base de donnees vectorielle | Fonctionnel |
 | Ollama (qwen3:8b) | LLM local | Fonctionnel |
 
-**Le perimetre du PFE se concentre sur le coeur du systeme** : l'orchestrateur et les agents. Les composants peripheriques (frontend, authentification, administration) sont prevus dans l'architecture cible mais ne font pas partie du livrable MVP actuel.
+**Le perimetre du Projet se concentre sur le coeur du systeme** : l'orchestrateur et les agents. Les composants peripheriques (frontend, authentification, administration) sont prevus dans l'architecture cible mais ne font pas partie du livrable MVP actuel.
 
 ---
 
@@ -55,7 +54,7 @@ L'architecture cible complete (decrite dans le document de specification) compre
 
 ### Ce qui est implemente et fonctionnel
 
-**Orchestrateur (contribution principale du PFE)**
+**Orchestrateur (contribution principale)**
 - Pipeline LangGraph complet a 6 noeuds avec transitions conditionnelles
 - Router hybride a 3 niveaux : regles deterministes (< 1ms) puis embeddings semantiques (~10ms) puis fallback
 - Appels paralleles aux agents via HTTP
@@ -238,7 +237,7 @@ Plutot que d'essayer d'implementer tout le systeme d'un coup, on construit d'abo
 
 ## 9. Ce qui reste a faire
 
-### Pour une version plus avancee du PFE
+### Pour une version plus avancee
 
 | Tache | Complexite | Impact |
 |-------|-----------|--------|
@@ -248,7 +247,7 @@ Plutot que d'essayer d'implementer tout le systeme d'un coup, on construit d'abo
 | Fusion LLM multi-agents | Faible | Synthese plus naturelle quand plusieurs agents repondent |
 | Query Decomposer LLM | Moyenne | Gestion des questions multi-intent ("prix ET station proche") |
 
-### Pour une mise en production (hors perimetre PFE)
+### Pour une mise en production
 
 - Auth Gateway avec Keycloak (authentification SSO)
 - Back-office Django pour l'administration
@@ -268,6 +267,6 @@ Ce projet demontre la **faisabilite et la valeur d'une architecture multi-agents
 3. **Le pipeline est adaptatif** : le systeme sait demander une clarification, reessayer, ou se degrader proprement en cas de panne
 4. **L'architecture est extensible** : chaque stub peut etre remplace par une implementation reelle sans modifier le reste du systeme
 
-Le projet n'est pas un prototype jetable. Il est concu des le depart avec une architecture de production (microservices, cache, circuit breaker, configuration externalisee) qui permettra une evolution vers un produit reel apres le PFE.
+Le projet n'est pas un prototype jetable. Il est concu des le depart avec une architecture de production (microservices, cache, circuit breaker, configuration externalisee) qui permettra une evolution vers un produit.
 
 ---

@@ -29,7 +29,8 @@ class Settings(BaseSettings):
     max_retries: int = 1
 
     # --- Agent call timeout (seconds) ---
-    agent_timeout: float = 10.0
+    # 30s to accommodate LLM-backed agents (NL-to-SQL, RAG generation)
+    agent_timeout: float = 30.0
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

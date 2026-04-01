@@ -1,12 +1,12 @@
 """SQL Agent — FastAPI application.
 
 Endpoint : POST /query
-MVP provisoire : quelques requêtes hardcoded sur des mots-clés.
-Prochaine étape : NL-to-SQL via Ollama.
+Pipeline : NL-to-SQL (Ollama) → fallback keyword mapping → unsupported.
 """
 
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,10 +14,13 @@ from loguru import logger
 
 from app.models.schemas import SQLRequest, SQLResponse
 from app.services import database
+from app.services.sql_generator import generate_sql
+from app.services.sql_cleaner import clean_sql
+from app.services.sql_validator import validate_sql
 
 
 # ---------------------------------------------------------------------------
-# MVP: pattern matching → SQL query mapping
+# MVP: pattern matching → SQL query mapping (fallback)
 # ---------------------------------------------------------------------------
 
 _MVP_QUERIES: list[dict] = [
@@ -96,11 +99,6 @@ _MVP_QUERIES: list[dict] = [
     },
 ]
 
-NOT_IMPLEMENTED_MSG = (
-    "La génération NL-to-SQL n'est pas encore implémentée. "
-    "Essayez une question sur les prix, commandes ou réclamations."
-)
-
 
 def _match_query(user_query: str) -> dict | None:
     """Find the first MVP mapping whose keywords all appear in the query."""
@@ -112,8 +110,98 @@ def _match_query(user_query: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# NL-to-SQL pipeline
+# ---------------------------------------------------------------------------
+
+
+async def _try_nl_to_sql(question: str) -> SQLResponse | None:
+    """Attempt NL-to-SQL: generate → clean → validate → execute → format.
+
+    Returns a SQLResponse on success, None on any failure (caller falls back).
+    """
+    # --- Step 1: Generate ---
+    try:
+        raw = await generate_sql(question)
+        logger.info(f"[nl_to_sql] Generated raw SQL ({len(raw)} chars)")
+    except Exception as exc:
+        logger.warning(f"[nl_to_sql] Generation failed: {exc}")
+        return None
+
+    # --- Step 2: Clean ---
+    sql = clean_sql(raw)
+    if not sql:
+        logger.warning("[nl_to_sql] Cleaning returned empty — no SELECT found")
+        return None
+    logger.info(f"[nl_to_sql] Cleaned SQL: {sql}")
+
+    # --- Step 3: Validate ---
+    is_valid, reason = validate_sql(sql)
+    if not is_valid:
+        logger.warning(f"[nl_to_sql] Validation failed: {reason}")
+        return None
+    logger.info("[nl_to_sql] Validation passed")
+
+    # --- Step 4: Execute ---
+    try:
+        rows = await database.execute_query(sql)
+        logger.info(f"[nl_to_sql] Query returned {len(rows)} row(s)")
+    except Exception as exc:
+        logger.error(f"[nl_to_sql] Execution failed: {exc}")
+        return None
+
+    # --- Step 5: Format ---
+    answer = _format_rows(rows)
+    tables = _extract_tables(sql)
+
+    return SQLResponse(
+        answer=answer,
+        confidence=0.82 if rows else 0.40,
+        sources=[f"table:{t}" for t in tables],
+        data={"rows_returned": len(rows), "sql": sql},
+        metadata={"strategy": "nl_to_sql"},
+    )
+
+
+def _format_rows(rows: list[dict]) -> str:
+    """Simple MVP formatter for NL-to-SQL results."""
+    if not rows:
+        return "Aucun résultat trouvé pour cette requête."
+
+    # Single row, single column → direct value
+    if len(rows) == 1 and len(rows[0]) == 1:
+        val = list(rows[0].values())[0]
+        return str(val)
+
+    # Single row, multiple columns → sentence-like
+    if len(rows) == 1:
+        parts = [f"{k} : {v}" for k, v in rows[0].items()]
+        return ", ".join(parts) + "."
+
+    # Multiple rows → bulleted list
+    lines = []
+    for row in rows:
+        parts = [str(v) for v in row.values()]
+        lines.append("- " + " | ".join(parts))
+
+    header = f"{len(rows)} résultat(s) :"
+    return header + "\n" + "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_tables(sql: str) -> list[str]:
+    """Quick extraction of table names from FROM/JOIN clauses."""
+    tables = re.findall(r'(?:FROM|JOIN)\s+(\w+)', sql, re.IGNORECASE)
+    return sorted(set(tables))
+
+
+# ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -129,7 +217,7 @@ async def lifespan(app: FastAPI):
     await database.close_pool()
 
 
-app = FastAPI(title="Afriquia SQL Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Afriquia SQL Agent", version="0.2.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -141,47 +229,46 @@ async def health() -> dict:
 async def query(req: SQLRequest) -> SQLResponse:
     logger.info(f"SQL Agent | query='{req.query}'")
 
+    # --- Strategy 1: NL-to-SQL via Ollama ---
+    nl_result = await _try_nl_to_sql(req.query)
+    if nl_result is not None:
+        logger.info("[query] Answered via NL-to-SQL")
+        return nl_result
+
+    # --- Strategy 2: Fallback keyword mapping ---
     mapping = _match_query(req.query)
+    if mapping is not None:
+        logger.info("[query] Falling back to keyword mapping")
+        sql = mapping["sql"]
+        try:
+            rows = await database.execute_query(sql)
+        except Exception as exc:
+            logger.error(f"SQL execution error: {exc}")
+            return SQLResponse(
+                answer="Erreur lors de l'exécution de la requête.",
+                confidence=0.0,
+                metadata={"strategy": "mvp_keyword_match", "error": str(exc)},
+            )
 
-    # --- No mapping found: NL-to-SQL not yet implemented ---
-    if mapping is None:
-        logger.info("No keyword match — NL-to-SQL not yet implemented")
+        try:
+            answer = mapping["formatter"](rows)
+        except Exception as exc:
+            logger.error(f"Formatter error: {exc}")
+            answer = f"Résultat brut : {rows}"
+
         return SQLResponse(
-            answer=NOT_IMPLEMENTED_MSG,
-            confidence=0.0,
-            metadata={"status": "not_implemented"},
+            answer=answer,
+            confidence=0.88 if rows else 0.50,
+            sources=[f"table:{t}" for t in _extract_tables(sql)],
+            data={"rows_returned": len(rows), "sql": sql},
+            metadata={"strategy": "mvp_keyword_match"},
         )
 
-    # --- Execute the mapped SQL ---
-    sql = mapping["sql"]
-    try:
-        rows = await database.execute_query(sql)
-    except Exception as exc:
-        logger.error(f"SQL execution error: {exc}")
-        return SQLResponse(
-            answer="Erreur lors de l'exécution de la requête.",
-            confidence=0.0,
-            metadata={"error": "sql_execution_failed", "detail": str(exc)},
-        )
-
-    # --- Format the answer ---
-    try:
-        answer = mapping["formatter"](rows)
-    except Exception as exc:
-        logger.error(f"Formatter error: {exc}")
-        answer = f"Résultat brut : {rows}"
-
+    # --- Strategy 3: Unsupported ---
+    logger.info("[query] No strategy matched — unsupported")
     return SQLResponse(
-        answer=answer,
-        confidence=0.88 if rows else 0.50,
-        sources=[f"table:{t}" for t in _extract_tables(sql)],
-        data={"rows_returned": len(rows), "sql": sql},
-        metadata={"strategy": "mvp_keyword_match"},
+        answer="Je n'ai pas pu répondre à cette question. "
+               "Essayez une question sur les prix, commandes, clients ou réclamations.",
+        confidence=0.0,
+        metadata={"strategy": "unsupported"},
     )
-
-
-def _extract_tables(sql: str) -> list[str]:
-    """Quick extraction of table names from FROM/JOIN clauses."""
-    import re
-    tables = re.findall(r'(?:FROM|JOIN)\s+(\w+)', sql, re.IGNORECASE)
-    return sorted(set(tables))

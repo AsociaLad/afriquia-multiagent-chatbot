@@ -51,6 +51,27 @@ def test_sql_reclamation_avec_accent():
     assert conf >= 0.8
 
 
+def test_sql_clients_ville():
+    """'clients habitent à Casablanca' must route to SQL, not Location."""
+    agents, conf = route_by_rules("Quels clients habitent à Casablanca ?", AGENT_TYPES)
+    assert agents == ["sql"]
+    assert conf >= 0.80
+
+
+def test_sql_clients_ville_courte():
+    """'Clients à Rabat' must route to SQL."""
+    agents, conf = route_by_rules("Clients à Rabat", AGENT_TYPES)
+    assert "sql" in agents
+    assert conf >= 0.80
+
+
+def test_location_station_ville_still_works():
+    """'Station proche de Casablanca' must still route to Location."""
+    agents, conf = route_by_rules("Station Afriquia proche de Casablanca", AGENT_TYPES)
+    assert agents == ["location"]
+    assert conf >= 0.80
+
+
 def test_unknown_query():
     agents, conf = route_by_rules("Bonjour, comment ça va ?", AGENT_TYPES)
     assert conf < 0.5
