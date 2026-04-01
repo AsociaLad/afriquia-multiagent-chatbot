@@ -17,6 +17,7 @@ from app.services import database
 from app.services.sql_generator import generate_sql
 from app.services.sql_cleaner import clean_sql
 from app.services.sql_validator import validate_sql
+from app.services.formatter import format_answer
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +151,7 @@ async def _try_nl_to_sql(question: str) -> SQLResponse | None:
         return None
 
     # --- Step 5: Format ---
-    answer = _format_rows(rows)
+    answer = await format_answer(question, rows, sql)
     tables = _extract_tables(sql)
 
     return SQLResponse(
@@ -160,31 +161,6 @@ async def _try_nl_to_sql(question: str) -> SQLResponse | None:
         data={"rows_returned": len(rows), "sql": sql},
         metadata={"strategy": "nl_to_sql"},
     )
-
-
-def _format_rows(rows: list[dict]) -> str:
-    """Simple MVP formatter for NL-to-SQL results."""
-    if not rows:
-        return "Aucun résultat trouvé pour cette requête."
-
-    # Single row, single column → direct value
-    if len(rows) == 1 and len(rows[0]) == 1:
-        val = list(rows[0].values())[0]
-        return str(val)
-
-    # Single row, multiple columns → sentence-like
-    if len(rows) == 1:
-        parts = [f"{k} : {v}" for k, v in rows[0].items()]
-        return ", ".join(parts) + "."
-
-    # Multiple rows → bulleted list
-    lines = []
-    for row in rows:
-        parts = [str(v) for v in row.values()]
-        lines.append("- " + " | ".join(parts))
-
-    header = f"{len(rows)} résultat(s) :"
-    return header + "\n" + "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

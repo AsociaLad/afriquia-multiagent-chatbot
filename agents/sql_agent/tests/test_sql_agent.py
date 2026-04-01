@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app, _match_query, _format_rows
+from app.main import app, _match_query
 import app.main as main_mod  # for monkeypatching generate_sql
 
 
@@ -113,33 +113,6 @@ def test_match_reclamation():
 def test_no_match_unknown():
     m = _match_query("Bonjour comment ça va ?")
     assert m is None
-
-
-# ---------------------------------------------------------------------------
-# _format_rows unit tests
-# ---------------------------------------------------------------------------
-
-def test_format_rows_empty():
-    assert "Aucun résultat" in _format_rows([])
-
-
-def test_format_rows_single_value():
-    result = _format_rows([{"count": 42}])
-    assert "42" in result
-
-
-def test_format_rows_single_row():
-    result = _format_rows([{"nom": "Gazoil", "prix": 12.45}])
-    assert "Gazoil" in result
-    assert "12.45" in result
-
-
-def test_format_rows_multiple():
-    rows = [{"nom": "A", "ville": "Casa"}, {"nom": "B", "ville": "Rabat"}]
-    result = _format_rows(rows)
-    assert "2 résultat(s)" in result
-    assert "A" in result
-    assert "B" in result
 
 
 # ---------------------------------------------------------------------------
