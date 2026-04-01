@@ -16,3 +16,6 @@ env/
 htmlcov/
 data/documents/*.pdf
 data/documents/*.txt
+# Local Claude AI Assistant files
+CLAUDE.md
+.claude/
