@@ -6,6 +6,8 @@ using a system prompt with schema description and few-shot examples.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 from loguru import logger
 
@@ -196,7 +198,6 @@ async def generate_sql(question: str) -> str:
 
         # Look for SQL in the thinking text (the model sometimes writes
         # the final query inside its reasoning)
-        import re
         select_match = re.search(
             r"(SELECT\s+.+?;)",
             thinking_text,
@@ -216,3 +217,91 @@ async def generate_sql(question: str) -> str:
         f"Ollama returned empty response (done_reason={done_reason}). "
         f"Thinking had {len(thinking_text)} chars but no extractable SQL."
     )
+
+
+# ---------------------------------------------------------------------------
+# Retry prompt
+# ---------------------------------------------------------------------------
+
+_RETRY_SYSTEM_PROMPT = f"""Tu es un assistant SQL expert pour la base de données Afriquia/AlloGaz.
+
+Ta mission : corriger une requête SQL qui a échoué lors de l'exécution PostgreSQL.
+
+### Schéma de la base de données :
+
+{DB_SCHEMA}
+
+### Règles strictes :
+1. Génère UNIQUEMENT une requête SELECT corrigée.
+2. Utilise UNIQUEMENT les tables et colonnes décrites ci-dessus.
+3. Corrige l'erreur indiquée tout en répondant à la question initiale.
+4. Retourne UNIQUEMENT la requête SQL corrigée, sans explication.
+"""
+
+
+async def retry_generate_sql(
+    question: str, previous_sql: str, pg_error: str
+) -> str:
+    """Re-generate SQL after a PostgreSQL execution error.
+
+    Sends the original question, the failed SQL, and the error message
+    to Ollama so it can produce a corrected query.
+
+    Raises:
+        RuntimeError: if Ollama is unreachable or returns an error.
+    """
+    # Truncate error message to keep prompt clean
+    short_error = pg_error[:300].strip()
+
+    prompt = (
+        f"Question de l'utilisateur : {question}\n\n"
+        f"Requête SQL précédente (échouée) :\n{previous_sql}\n\n"
+        f"Erreur PostgreSQL :\n{short_error}\n\n"
+        f"Génère une requête SQL SELECT corrigée."
+    )
+
+    url = f"{settings.ollama_base_url}/api/generate"
+    payload = {
+        "model": settings.ollama_model,
+        "prompt": prompt,
+        "system": _RETRY_SYSTEM_PROMPT,
+        "stream": False,
+        "options": {
+            "temperature": 0,
+            "num_predict": 1024,
+        },
+    }
+
+    logger.info(f"[sql_generator] Retry — sending correction request to Ollama")
+    logger.debug(f"[sql_generator] Retry — error was: {short_error}")
+
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.TimeoutException:
+        logger.error("[sql_generator] Retry — Ollama timeout (90s)")
+        raise RuntimeError("Ollama timeout on retry.")
+    except httpx.HTTPError as exc:
+        logger.error(f"[sql_generator] Retry — Ollama HTTP error: {exc}")
+        raise RuntimeError(f"Ollama error on retry: {exc}")
+
+    response_text = data.get("response", "").strip()
+    thinking_text = data.get("thinking", "").strip()
+
+    if response_text:
+        logger.info(f"[sql_generator] Retry — got response ({len(response_text)} chars)")
+        return response_text
+
+    # Fallback: extract from thinking
+    if thinking_text:
+        select_match = re.search(
+            r"(SELECT\s+.+?;)", thinking_text, re.DOTALL | re.IGNORECASE
+        )
+        if select_match:
+            extracted = select_match.group(1).strip()
+            logger.info(f"[sql_generator] Retry — extracted SQL from thinking")
+            return extracted
+
+    raise RuntimeError("Retry returned empty response.")

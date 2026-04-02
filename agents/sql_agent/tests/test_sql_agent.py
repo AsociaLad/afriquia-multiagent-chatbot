@@ -190,3 +190,153 @@ async def test_nl_to_sql_zero_rows(client, mock_db, monkeypatch):
     assert data["metadata"]["strategy"] == "nl_to_sql"
     assert data["data"]["rows_returned"] == 0
     assert "Aucun résultat" in data["answer"]
+
+
+# ---------------------------------------------------------------------------
+# Retry SQL — execution error → retry → success
+# ---------------------------------------------------------------------------
+
+async def test_retry_succeeds(client, monkeypatch):
+    """First SQL has bad column → retry generates correct SQL → success."""
+    from app.services import database as db_mod
+
+    # generate_sql returns SQL with a typo (bad column name)
+    async def fake_generate(question):
+        return "SELECT nome FROM clients WHERE ville ILIKE '%Casablanca%';"
+
+    monkeypatch.setattr(main_mod, "generate_sql", fake_generate)
+
+    # retry_generate_sql returns corrected SQL
+    async def fake_retry(question, previous_sql, pg_error):
+        return "SELECT nom FROM clients WHERE ville ILIKE '%Casablanca%';"
+
+    monkeypatch.setattr(main_mod, "retry_generate_sql", fake_retry)
+
+    # DB: first call fails (bad column), second call succeeds
+    call_count = 0
+
+    async def fake_execute(sql):
+        nonlocal call_count
+        call_count += 1
+        if "nome" in sql:
+            raise Exception('column "nome" does not exist')
+        return [{"nom": "Youssef El Amrani", "ville": "Casablanca"}]
+
+    monkeypatch.setattr(db_mod, "execute_query", fake_execute)
+
+    async def fake_get_pool():
+        return None
+    async def fake_close_pool():
+        pass
+    monkeypatch.setattr(db_mod, "get_pool", fake_get_pool)
+    monkeypatch.setattr(db_mod, "close_pool", fake_close_pool)
+
+    resp = await client.post(
+        "/query",
+        json={"query": "Quels clients habitent à Casablanca ?"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["metadata"]["strategy"] == "nl_to_sql"
+    assert data["metadata"]["retry_used"] is True
+    assert data["metadata"]["retry_success"] is True
+    assert data["data"]["rows_returned"] >= 1
+    # Confidence should be lower than normal (0.72 vs 0.82)
+    assert data["confidence"] == pytest.approx(0.72)
+    assert call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Retry SQL — execution error → retry also fails → fallback
+# ---------------------------------------------------------------------------
+
+async def test_retry_fails_then_fallback(client, monkeypatch):
+    """First SQL fails, retry also fails → falls back to keyword mapping."""
+    from app.services import database as db_mod
+
+    # generate_sql returns bad SQL
+    async def fake_generate(question):
+        return "SELECT nome FROM produits WHERE nom ILIKE '%gazoil%';"
+
+    monkeypatch.setattr(main_mod, "generate_sql", fake_generate)
+
+    # retry also returns bad SQL (different but still broken)
+    async def fake_retry(question, previous_sql, pg_error):
+        return "SELECT namme FROM produits WHERE nom ILIKE '%gazoil%';"
+
+    monkeypatch.setattr(main_mod, "retry_generate_sql", fake_retry)
+
+    # DB: always fails with SQL errors
+    async def fake_execute(sql):
+        if "nome" in sql:
+            raise Exception('column "nome" does not exist')
+        if "namme" in sql:
+            raise Exception('column "namme" does not exist')
+        # Keyword mapping queries work fine
+        if "produits" in sql.lower() and "gazoil" in sql.lower():
+            return [
+                {"nom": "Gazoil 50 ppm", "prix_unitaire": 12.45,
+                 "unite": "L", "date_maj": "2025-03-28"}
+            ]
+        return []
+
+    monkeypatch.setattr(db_mod, "execute_query", fake_execute)
+
+    async def fake_get_pool():
+        return None
+    async def fake_close_pool():
+        pass
+    monkeypatch.setattr(db_mod, "get_pool", fake_get_pool)
+    monkeypatch.setattr(db_mod, "close_pool", fake_close_pool)
+
+    resp = await client.post(
+        "/query",
+        json={"query": "Quel est le prix du gazoil ?"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # NL-to-SQL failed (both attempts) → fell back to keyword mapping
+    assert data["metadata"]["strategy"] == "mvp_keyword_match"
+    assert "12.45" in data["answer"]
+
+
+# ---------------------------------------------------------------------------
+# Retry SQL — non-retryable error (network) → no retry, direct fallback
+# ---------------------------------------------------------------------------
+
+async def test_no_retry_on_network_error(client, monkeypatch):
+    """Connection error → NOT retryable → skip retry, go to fallback."""
+    from app.services import database as db_mod
+
+    async def fake_generate(question):
+        return "SELECT nom FROM clients WHERE ville ILIKE '%Casablanca%';"
+
+    monkeypatch.setattr(main_mod, "generate_sql", fake_generate)
+
+    # retry_generate_sql should NOT be called — set it to fail loudly
+    async def fake_retry_should_not_be_called(question, previous_sql, pg_error):
+        raise AssertionError("retry_generate_sql should not have been called!")
+
+    monkeypatch.setattr(main_mod, "retry_generate_sql", fake_retry_should_not_be_called)
+
+    # DB: connection refused (not a SQL error)
+    async def fake_execute(sql):
+        raise ConnectionRefusedError("connection refused")
+
+    monkeypatch.setattr(db_mod, "execute_query", fake_execute)
+
+    async def fake_get_pool():
+        return None
+    async def fake_close_pool():
+        pass
+    monkeypatch.setattr(db_mod, "get_pool", fake_get_pool)
+    monkeypatch.setattr(db_mod, "close_pool", fake_close_pool)
+
+    resp = await client.post(
+        "/query",
+        json={"query": "Quels clients habitent à Casablanca ?"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # NL-to-SQL gave up (non-retryable) → unsupported (no keyword match)
+    assert data["metadata"]["strategy"] == "unsupported"

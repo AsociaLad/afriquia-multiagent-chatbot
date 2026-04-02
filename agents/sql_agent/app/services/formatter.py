@@ -57,6 +57,8 @@ Règles :
 3. Utilise des listes à puces si besoin.
 4. Réponds directement à la question posée.
 5. Si les données sont nombreuses, résume les points clés.
+6. Ta réponse sera affichée directement à l'utilisateur final.
+7. N'inclus AUCUNE réflexion interne, consigne, vérification ou meta-commentaire.
 """
 
 
@@ -115,18 +117,15 @@ async def _format_with_llm(question: str, rows: list[dict]) -> str | None:
 
     response_text = data.get("response", "").strip()
 
-    # qwen3:8b thinking mode: check thinking field if response is empty
+    # NOTE: We intentionally do NOT use the thinking field for formatting.
+    # Unlike sql_generator (where we extract structured SQL from thinking),
+    # here we need free-form French text — the thinking field contains
+    # internal reasoning / meta-commentary that is not user-facing.
     if not response_text:
-        thinking_text = data.get("thinking", "").strip()
-        if thinking_text:
-            # Use last paragraph of thinking as the answer
-            paragraphs = [p.strip() for p in thinking_text.split("\n\n") if p.strip()]
-            if paragraphs:
-                response_text = paragraphs[-1]
-                logger.info("[formatter] Used thinking field fallback")
-
-    if not response_text:
-        logger.warning("[formatter] Ollama returned empty — will use simple format")
+        logger.warning(
+            "[formatter] Ollama response field empty — "
+            "ignoring thinking field, will use simple format"
+        )
         return None
 
     logger.info(f"[formatter] LLM formatted response ({len(response_text)} chars)")

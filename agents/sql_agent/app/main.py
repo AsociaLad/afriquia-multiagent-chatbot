@@ -14,10 +14,38 @@ from loguru import logger
 
 from app.models.schemas import SQLRequest, SQLResponse
 from app.services import database
-from app.services.sql_generator import generate_sql
+from app.services.sql_generator import generate_sql, retry_generate_sql
 from app.services.sql_cleaner import clean_sql
 from app.services.sql_validator import validate_sql
 from app.services.formatter import format_answer
+
+
+# ---------------------------------------------------------------------------
+# Retry helpers
+# ---------------------------------------------------------------------------
+
+# PostgreSQL error patterns that indicate a correctable SQL problem
+_RETRYABLE_PATTERNS = [
+    "syntax error",
+    "column",
+    "does not exist",
+    "relation",
+    "ambiguous",
+    "invalid input syntax",
+    "operator does not exist",
+    "missing FROM-clause",
+    "must appear in the GROUP BY",
+]
+
+
+def _is_retryable_error(error: Exception) -> bool:
+    """Check if a DB execution error is a SQL mistake worth retrying.
+
+    Returns True for syntax/column/table errors.
+    Returns False for network/timeout/connection errors.
+    """
+    msg = str(error).lower()
+    return any(pattern in msg for pattern in _RETRYABLE_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -143,23 +171,76 @@ async def _try_nl_to_sql(question: str) -> SQLResponse | None:
     logger.info("[nl_to_sql] Validation passed")
 
     # --- Step 4: Execute ---
+    retry_used = False
+    retry_success = False
+
     try:
         rows = await database.execute_query(sql)
         logger.info(f"[nl_to_sql] Query returned {len(rows)} row(s)")
     except Exception as exc:
-        logger.error(f"[nl_to_sql] Execution failed: {exc}")
-        return None
+        logger.warning(f"[nl_to_sql] First execution failed: {exc}")
+
+        # Only retry on correctable SQL errors (not network/timeout)
+        if not _is_retryable_error(exc):
+            logger.error("[nl_to_sql] Error is not retryable — giving up")
+            return None
+
+        # --- Step 4b: Retry (1 attempt max) ---
+        retry_used = True
+        logger.info("[nl_to_sql] Retry started — asking LLM to correct SQL")
+
+        try:
+            retry_raw = await retry_generate_sql(question, sql, str(exc))
+        except Exception as retry_exc:
+            logger.warning(f"[nl_to_sql] Retry generation failed: {retry_exc}")
+            return None
+
+        retry_sql = clean_sql(retry_raw)
+        if not retry_sql:
+            logger.warning("[nl_to_sql] Retry cleaning returned empty")
+            return None
+
+        # Avoid retrying with the exact same SQL
+        if retry_sql == sql:
+            logger.warning("[nl_to_sql] Retry SQL identical to original — skipping")
+            return None
+
+        is_valid, reason = validate_sql(retry_sql)
+        if not is_valid:
+            logger.warning(f"[nl_to_sql] Retry validation failed: {reason}")
+            return None
+
+        try:
+            rows = await database.execute_query(retry_sql)
+            sql = retry_sql  # use corrected SQL from here on
+            retry_success = True
+            logger.info(
+                f"[nl_to_sql] Retry succeeded — {len(rows)} row(s)"
+            )
+        except Exception as retry_exec_exc:
+            logger.error(f"[nl_to_sql] Retry execution also failed: {retry_exec_exc}")
+            return None
 
     # --- Step 5: Format ---
     answer = await format_answer(question, rows, sql)
     tables = _extract_tables(sql)
 
+    # Confidence: slightly lower if retry was needed
+    if rows:
+        confidence = 0.72 if retry_used else 0.82
+    else:
+        confidence = 0.35 if retry_used else 0.40
+
+    metadata = {"strategy": "nl_to_sql", "retry_used": retry_used}
+    if retry_used:
+        metadata["retry_success"] = retry_success
+
     return SQLResponse(
         answer=answer,
-        confidence=0.82 if rows else 0.40,
+        confidence=confidence,
         sources=[f"table:{t}" for t in tables],
         data={"rows_returned": len(rows), "sql": sql},
-        metadata={"strategy": "nl_to_sql"},
+        metadata=metadata,
     )
 
 

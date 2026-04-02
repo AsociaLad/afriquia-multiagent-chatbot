@@ -131,12 +131,12 @@ async def test_format_answer_llm_empty_response_falls_back():
 
 
 # ---------------------------------------------------------------------------
-# _format_with_llm — thinking fallback
+# _format_with_llm — thinking field is NEVER used
 # ---------------------------------------------------------------------------
 
 
-async def test_llm_uses_thinking_fallback():
-    """Empty response but thinking has content → uses last paragraph."""
+async def test_llm_ignores_thinking_field():
+    """Empty response + thinking with content → returns None (not thinking)."""
     rows = [{"nom": f"C_{i}"} for i in range(5)]
 
     mock_response = {
@@ -155,8 +155,39 @@ async def test_llm_uses_thinking_fallback():
         mock_cls.return_value = mock_client
 
         result = await _format_with_llm("Clients ?", rows)
-        assert result is not None
-        assert "5 clients" in result
+        # Must return None — thinking field must NOT be used
+        assert result is None
+
+
+async def test_format_answer_thinking_only_falls_back_to_simple():
+    """Ollama response empty + thinking has reasoning → fallback to simple."""
+    rows = [{"statut": "livree", "nb": 7}, {"statut": "en_livraison", "nb": 4},
+            {"statut": "en_attente", "nb": 3}, {"statut": "annulee", "nb": 2}]
+
+    mock_response = {
+        "response": "",
+        "thinking": "Check for any typos and ensure the numbers match the results. That should cover",
+    }
+
+    with patch("app.services.formatter.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = mock_response
+        mock_resp.raise_for_status = MagicMock()
+        mock_client.post.return_value = mock_resp
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_client
+
+        result = await format_answer(
+            "Combien de commandes par statut ?", rows,
+            "SELECT statut, COUNT(*) AS nb FROM commandes GROUP BY statut;",
+        )
+        # Must use simple format — NOT the thinking garbage
+        assert "4 résultat(s)" in result
+        assert "livree" in result
+        assert "Check" not in result
+        assert "typos" not in result
 
 
 # ---------------------------------------------------------------------------
