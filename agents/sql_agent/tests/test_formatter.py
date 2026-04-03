@@ -191,6 +191,44 @@ async def test_format_answer_thinking_only_falls_back_to_simple():
 
 
 # ---------------------------------------------------------------------------
+# Coherence guard: LLM says "aucun" but rows exist → fallback
+# ---------------------------------------------------------------------------
+
+
+async def test_llm_contradicts_data_falls_back():
+    """LLM says 'aucune commande' but 7 rows were returned → fallback."""
+    rows = [
+        {"id": i, "client": f"Client_{i}", "statut": "livree"}
+        for i in range(7)
+    ]
+
+    mock_response = {
+        "response": "Aucune commande n'a le statut livree dans la base de données.",
+        "thinking": "",
+    }
+
+    with patch("app.services.formatter.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = mock_response
+        mock_resp.raise_for_status = MagicMock()
+        mock_client.post.return_value = mock_resp
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_client
+
+        result = await format_answer(
+            "Quelles commandes ont le statut livree ?", rows,
+            "SELECT * FROM commandes WHERE statut = 'livree';",
+        )
+        # Must NOT contain the LLM hallucination
+        assert "Aucune" not in result
+        # Must use simple format with actual data
+        assert "7 résultat(s)" in result
+        assert "Client_0" in result
+
+
+# ---------------------------------------------------------------------------
 # Edge case: exactly 3 rows → simple (boundary)
 # ---------------------------------------------------------------------------
 

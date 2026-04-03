@@ -8,6 +8,8 @@ Stratégie :
 
 from __future__ import annotations
 
+import re
+
 import httpx
 from loguru import logger
 
@@ -15,6 +17,22 @@ from app.config import settings
 
 # Max rows envoyées au LLM pour le formatage (limite le prompt)
 _MAX_ROWS_FOR_LLM = 10
+
+# ---------------------------------------------------------------------------
+# Coherence guard
+# ---------------------------------------------------------------------------
+
+
+def _is_coherent(answer: str, rows: list[dict]) -> bool:
+    """Basic sanity check: if rows exist, the answer must not say 'none found'.
+
+    Catches the common LLM hallucination where it says "aucun résultat" or
+    "aucune commande" despite receiving actual data rows.
+    """
+    if rows and re.search(r"\baucun[e]?\b", answer, re.IGNORECASE):
+        return False
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Simple formatter (templates Python)
@@ -125,6 +143,14 @@ async def _format_with_llm(question: str, rows: list[dict]) -> str | None:
         logger.warning(
             "[formatter] Ollama response field empty — "
             "ignoring thinking field, will use simple format"
+        )
+        return None
+
+    # Coherence check: reject if LLM contradicts the data
+    if not _is_coherent(response_text, rows):
+        logger.warning(
+            "[formatter] LLM response contradicts data "
+            "(says 'aucun' but rows exist) — will use simple format"
         )
         return None
 

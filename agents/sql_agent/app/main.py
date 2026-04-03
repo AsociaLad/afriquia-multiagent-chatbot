@@ -100,7 +100,7 @@ _MVP_QUERIES: list[dict] = [
         ),
     },
     {
-        "keywords": ["commande"],
+        "keywords": ["combien", "commande"],
         "sql": "SELECT statut, COUNT(*) AS nb FROM commandes GROUP BY statut ORDER BY nb DESC;",
         "formatter": lambda rows: (
             "Répartition des commandes :\n"

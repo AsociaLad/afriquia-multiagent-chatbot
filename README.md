@@ -101,15 +101,18 @@ Agent fonctionnel complet specialise dans la documentation technique Afriquia :
 
 ### SQL Agent (port 8006)
 
-Agent fonctionnel MVP specialise dans les donnees structurees :
+Agent fonctionnel specialise dans les donnees structurees :
 
-- **Strategie actuelle (MVP)** : 6 mappings keyword -> SQL pre-ecrit
-  - Prix gazoil, prix essence, tous les prix
-  - Commandes par statut, commandes avec livraisons
-  - Reclamations ouvertes
+- **Pipeline NL-to-SQL** (strategie principale) :
+  1. Generation SQL via Ollama qwen3:8b (prompt avec schema + few-shot)
+  2. Nettoyage (extraction SELECT, suppression `<think>`, markdown)
+  3. Validation securite (SELECT only, tables autorisees, pas de sous-requetes)
+  4. Execution PostgreSQL via asyncpg
+  5. **Retry intelligent** : si erreur SQL corrigeable (syntaxe, colonne inconnue), 1 retry max avec le message d'erreur PostgreSQL injecte dans le prompt
+  6. **Formatage hybride** : templates Python (0-3 lignes) ou resume LLM (4+ lignes) avec fallback automatique
+- **Fallback keyword mapping** : 6 mappings pre-ecrits (prix, commandes, reclamations) utilises si NL-to-SQL echoue
 - **Base PostgreSQL** : 5 tables de demonstration (produits, clients, commandes, livraisons, reclamations)
-- **Securite** : utilisateur read-only `sql_agent_reader`, `statement_timeout`, auto-LIMIT
-- **Prevu v2** : generation NL-to-SQL via Ollama (sql_generator.py, sql_validator.py)
+- **Securite** : utilisateur read-only `sql_agent_reader`, `statement_timeout`, auto-LIMIT, validation stricte
 
 ### Location Agent (port 8010 -- mock)
 
@@ -126,7 +129,7 @@ Agent **non encore implemente**. Actuellement servi par le mock agent :
 |-----------|-------------|------|
 | Orchestrateur | FastAPI + LangGraph | Pipeline adaptatif multi-agents |
 | Agents | FastAPI | Microservices specialises |
-| LLM | Ollama + qwen3:8b | Generation de reponses (RAG, fusion) |
+| LLM | Ollama + qwen3:8b | NL-to-SQL, generation RAG, formatage SQL, fusion |
 | Embeddings | sentence-transformers MiniLM-L12-v2 | Routing semantique + RAG retrieval |
 | Base vectorielle | Qdrant | Stockage et recherche de documents |
 | Base relationnelle | PostgreSQL 16 | Donnees structurees (produits, commandes) |
@@ -145,14 +148,17 @@ Agent **non encore implemente**. Actuellement servi par le mock agent :
 - [x] Pipeline LangGraph complet a 6 noeuds avec conditional edges
 - [x] Router hybride L1 (regles) + L2 (embeddings) fonctionnels et calibres
 - [x] RAG Agent complet : ingestion, retrieval, generation avec anti-hallucination
-- [x] SQL Agent MVP : 6 requetes pre-ecrites sur donnees de demonstration
+- [x] SQL Agent : pipeline NL-to-SQL complet (generation, nettoyage, validation, execution)
+- [x] SQL Agent : retry intelligent (1 tentative max sur erreurs SQL corrigeables)
+- [x] SQL Agent : formateur hybride (templates simples + resume LLM avec fallback)
+- [x] SQL Agent : 6 mappings keyword pre-ecrits en fallback
 - [x] Cache Redis des reponses avec invalidation
 - [x] Circuit breaker par agent
 - [x] Appels paralleles aux agents (asyncio.gather)
 - [x] Retry automatique si confiance insuffisante
 - [x] Clarification si routage echoue
 - [x] Mock agent pour les tests d'integration
-- [x] Suite de tests (orchestrateur + RAG + SQL)
+- [x] Suite de tests (orchestrateur 11+ tests, SQL Agent 60 tests, RAG 10 tests)
 - [x] Infrastructure Docker Compose (PostgreSQL, Redis, Ollama, Qdrant)
 
 ### Limitations actuelles / ce qui est encore MVP
@@ -160,7 +166,7 @@ Agent **non encore implemente**. Actuellement servi par le mock agent :
 - [ ] **L3 LLM fallback** : stub (retourne [], 0.0) -- le router se rabat sur le RAG par defaut
 - [ ] **Query Decomposer** : stub (passthrough) -- chaque agent recoit la question complete
 - [ ] **Fusion multi-agents** : selection du meilleur score -- pas encore de synthese LLM
-- [ ] **SQL Agent** : 6 mappings keyword fixes -- pas encore de NL-to-SQL generatif
+- [x] ~~**SQL Agent** : 6 mappings keyword fixes -- pas encore de NL-to-SQL generatif~~ (implemente)
 - [ ] **Location Agent** : entierement mocke -- pas de donnees ni d'API de geolocalisation reelles
 - [ ] **data/stations.json** : fichier vide (placeholder)
 - [ ] **Pas d'authentification** : pas de Keycloak/Auth Gateway (prevu dans l'architecture cible)
@@ -205,10 +211,11 @@ afriquia-multiagent-chatbot/
 |   |   |-- scripts/                # Scripts de test manuels
 |   |   |-- tests/
 |   |
-|   |-- sql_agent/                  # Agent SQL (MVP keyword-match)
+|   |-- sql_agent/                  # Agent SQL (NL-to-SQL + keyword fallback)
 |   |   |-- app/                    # FastAPI : POST /query
-|   |   |   |-- services/           # database.py (asyncpg pool)
-|   |   |-- tests/
+|   |   |   |-- services/           # database, sql_generator, sql_cleaner, sql_validator, formatter
+|   |   |-- scripts/                # Scripts de test manuels (test_generator)
+|   |   |-- tests/                  # 60 tests (agent, formatter, cleaner, validator)
 |   |
 |   |-- mock_agent/                 # Agent mock (3 endpoints pour tests)
 |       |-- app/main.py             # /sql/query, /rag/query, /location/query
@@ -396,7 +403,7 @@ pytest tests/ -v
 
 ### Court terme (MVP+)
 
-- [ ] Implementer le **NL-to-SQL generatif** dans le SQL Agent (Ollama + schema BDD dans le prompt)
+- [x] ~~Implementer le **NL-to-SQL generatif** dans le SQL Agent~~ (implemente : generation, nettoyage, validation, retry, formatage hybride)
 - [ ] Implementer le **Location Agent reel** (API de geocodage, donnees stations)
 - [ ] Activer le **L3 LLM fallback** dans le router (Ollama pour les cas ambigus)
 - [ ] Implementer la **fusion LLM** pour les reponses multi-agents

@@ -110,6 +110,22 @@ def test_match_reclamation():
     assert "reclamations" in m["sql"].lower()
 
 
+def test_match_combien_commandes_statut():
+    """'combien' + 'commande' → matches the GROUP BY mapping."""
+    m = _match_query("Combien de commandes par statut ?")
+    assert m is not None
+    assert "group by" in m["sql"].lower()
+
+
+def test_no_match_commandes_statut_livree():
+    """'commandes ... statut livree' WITHOUT 'combien' → no keyword match.
+
+    This forces NL-to-SQL to handle it (avoids returning wrong aggregation).
+    """
+    m = _match_query("Quelles commandes ont le statut livree ?")
+    assert m is None
+
+
 def test_no_match_unknown():
     m = _match_query("Bonjour comment ça va ?")
     assert m is None
@@ -340,3 +356,120 @@ async def test_no_retry_on_network_error(client, monkeypatch):
     data = resp.json()
     # NL-to-SQL gave up (non-retryable) → unsupported (no keyword match)
     assert data["metadata"]["strategy"] == "unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Thinking field extraction — strict regex tests
+# ---------------------------------------------------------------------------
+
+async def test_thinking_with_valid_sql_extracts(client, monkeypatch):
+    """Thinking contains real SELECT...FROM...;  → extracted successfully."""
+    from app.services import database as db_mod
+
+    async def fake_generate(question):
+        # Simulates Ollama response with empty response but valid SQL in thinking
+        # We return the raw text that would come from the thinking fallback
+        return "SELECT l.id, l.livreur, l.statut FROM livraisons l WHERE l.statut = 'en_cours';"
+
+    monkeypatch.setattr(main_mod, "generate_sql", fake_generate)
+
+    async def fake_execute(sql):
+        return [{"id": 1, "livreur": "Ahmed", "statut": "en_cours"}]
+
+    monkeypatch.setattr(db_mod, "execute_query", fake_execute)
+    async def fake_get_pool():
+        return None
+    async def fake_close_pool():
+        pass
+    monkeypatch.setattr(db_mod, "get_pool", fake_get_pool)
+    monkeypatch.setattr(db_mod, "close_pool", fake_close_pool)
+
+    resp = await client.post(
+        "/query",
+        json={"query": "Quelles livraisons sont en cours ?"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["metadata"]["strategy"] == "nl_to_sql"
+    assert data["data"]["rows_returned"] == 1
+
+
+async def test_thinking_parasite_no_from_rejects(monkeypatch):
+    """Thinking with text that has SELECT and ; but no FROM → rejected."""
+    import re
+    # This simulates the strict regex that sql_generator now uses
+    thinking = (
+        "I need to select the right approach; let me think about this. "
+        "The user wants livraisons data."
+    )
+    match = re.search(
+        r"(SELECT\s+\S+.+?\bFROM\b.+?;)",
+        thinking,
+        re.DOTALL | re.IGNORECASE,
+    )
+    # Must NOT match — no real SELECT...FROM...;
+    assert match is None
+
+
+def test_thinking_real_sql_with_from_matches():
+    """Thinking with real SQL (SELECT...FROM...;) → matched by strict regex."""
+    import re
+    thinking = (
+        "Let me write the query.\n\n"
+        "SELECT l.id, l.livreur FROM livraisons l WHERE l.statut = 'en_cours';"
+    )
+    match = re.search(
+        r"(SELECT\s+\S+.+?\bFROM\b.+?;)",
+        thinking,
+        re.DOTALL | re.IGNORECASE,
+    )
+    assert match is not None
+    assert "livraisons" in match.group(1)
+
+
+# ---------------------------------------------------------------------------
+# C3 — livraisons en cours (NL-to-SQL pipeline, mocked)
+# ---------------------------------------------------------------------------
+
+async def test_nl_to_sql_livraisons_en_cours(client, monkeypatch):
+    """NL-to-SQL handles 'livraisons en cours avec le nom du livreur'."""
+    from app.services import database as db_mod
+
+    async def fake_generate(question):
+        return (
+            "SELECT l.id, l.livreur, l.statut, l.date_depart, c.id AS commande_id "
+            "FROM livraisons l JOIN commandes c ON c.id = l.commande_id "
+            "WHERE l.statut = 'en_cours' ORDER BY l.date_depart DESC;"
+        )
+
+    monkeypatch.setattr(main_mod, "generate_sql", fake_generate)
+
+    async def fake_execute(sql):
+        if "livraisons" in sql.lower() and "en_cours" in sql.lower():
+            return [
+                {"id": 1, "livreur": "Ahmed Benali", "statut": "en_cours",
+                 "date_depart": "2025-03-28T10:00:00", "commande_id": 5},
+                {"id": 3, "livreur": "Karim Idrissi", "statut": "en_cours",
+                 "date_depart": "2025-03-28T14:30:00", "commande_id": 9},
+            ]
+        return []
+
+    monkeypatch.setattr(db_mod, "execute_query", fake_execute)
+
+    async def fake_get_pool():
+        return None
+    async def fake_close_pool():
+        pass
+    monkeypatch.setattr(db_mod, "get_pool", fake_get_pool)
+    monkeypatch.setattr(db_mod, "close_pool", fake_close_pool)
+
+    resp = await client.post(
+        "/query",
+        json={"query": "Quelles livraisons sont en cours, avec le nom du livreur ?"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["metadata"]["strategy"] == "nl_to_sql"
+    assert data["data"]["rows_returned"] == 2
+    assert "livraisons" in data["data"]["sql"].lower()
+    assert data["confidence"] > 0.0

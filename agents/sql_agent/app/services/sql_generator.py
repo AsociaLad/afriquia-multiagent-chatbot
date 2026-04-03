@@ -108,10 +108,19 @@ Question : Quelles sont les réclamations ouvertes ?
 SELECT r.id, cl.nom AS client, r.sujet, r.statut, r.date_creation FROM reclamations r JOIN clients cl ON cl.id = r.client_id WHERE r.statut IN ('ouverte', 'en_cours') ORDER BY r.date_creation DESC;
 
 Question : Quel client a le plus dépensé ?
-SELECT cl.nom, cl.ville, SUM(c.montant_total) AS total_depense FROM commandes c JOIN clients cl ON cl.id = c.client_id WHERE c.statut != 'annulee' GROUP BY cl.nom, cl.ville ORDER BY total_depense DESC LIMIT 5;
+SELECT cl.nom, cl.ville, SUM(c.montant_total) AS total_depense FROM commandes c JOIN clients cl ON cl.id = c.client_id WHERE c.statut != 'annulee' GROUP BY cl.nom, cl.ville ORDER BY total_depense DESC LIMIT 1;
 
 Question : Quelles commandes sont en livraison ?
 SELECT c.id, cl.nom AS client, p.nom AS produit, c.quantite, c.montant_total, c.date_commande FROM commandes c JOIN clients cl ON cl.id = c.client_id JOIN produits p ON p.id = c.produit_id WHERE c.statut = 'en_livraison' ORDER BY c.date_commande DESC;
+
+Question : Quelles commandes ont le statut livree ?
+SELECT c.id, cl.nom AS client, p.nom AS produit, c.quantite, c.montant_total, c.date_commande FROM commandes c JOIN clients cl ON cl.id = c.client_id JOIN produits p ON p.id = c.produit_id WHERE c.statut = 'livree' ORDER BY c.date_commande DESC;
+
+Question : Quel est le prix moyen des carburants ?
+SELECT AVG(prix_unitaire) AS prix_moyen FROM produits WHERE categorie = 'carburant';
+
+Question : Quelles livraisons sont en cours, avec le nom du livreur ?
+SELECT l.id, l.livreur, l.statut, l.date_depart, c.id AS commande_id FROM livraisons l JOIN commandes c ON c.id = l.commande_id WHERE l.statut = 'en_cours' ORDER BY l.date_depart DESC;
 
 Question : Quels clients habitent à Casablanca ?
 SELECT nom, ville, type_client, telephone FROM clients WHERE ville ILIKE '%Casablanca%';
@@ -138,7 +147,7 @@ async def generate_sql(question: str) -> str:
     Returns the raw LLM output (caller should clean + validate).
 
     Note: qwen3:8b uses an internal "thinking" mode that consumes tokens
-    from the num_predict budget. We set num_predict=1024 to leave room
+    from the num_predict budget. We set num_predict=2048 to leave room
     for both thinking and the final SQL response. If the response field
     is empty but the thinking field contains usable SQL, we fall back to
     extracting from thinking.
@@ -154,7 +163,7 @@ async def generate_sql(question: str) -> str:
         "stream": False,
         "options": {
             "temperature": 0,
-            "num_predict": 1024,
+            "num_predict": 2048,
         },
     }
 
@@ -197,21 +206,32 @@ async def generate_sql(question: str) -> str:
         logger.debug(f"[sql_generator] Thinking content:\n{thinking_text[:500]}")
 
         # Look for SQL in the thinking text (the model sometimes writes
-        # the final query inside its reasoning)
+        # the final query inside its reasoning).
+        # Strict regex: require SELECT ... FROM ... ; to avoid capturing
+        # random text that happens to contain "select" and a semicolon.
         select_match = re.search(
-            r"(SELECT\s+.+?;)",
+            r"(SELECT\s+\S+.+?\bFROM\b.+?;)",
             thinking_text,
             re.DOTALL | re.IGNORECASE,
         )
         if select_match:
             extracted = select_match.group(1).strip()
-            logger.info(
-                f"[sql_generator] Extracted SQL from thinking (fallback): "
-                f"{extracted[:200]}"
-            )
-            return extracted
+            # Extra guard: reject if it contains too many natural-language words
+            # (a real SQL query won't have sentences with spaces between words
+            # outside of string literals)
+            if len(extracted) > 500:
+                logger.warning(
+                    f"[sql_generator] Extracted SQL too long "
+                    f"({len(extracted)} chars) — likely garbage, ignoring"
+                )
+            else:
+                logger.info(
+                    f"[sql_generator] Extracted SQL from thinking (fallback): "
+                    f"{extracted[:200]}"
+                )
+                return extracted
 
-        logger.warning("[sql_generator] No SELECT found in thinking field either")
+        logger.warning("[sql_generator] No valid SELECT..FROM found in thinking field")
 
     raise RuntimeError(
         f"Ollama returned empty response (done_reason={done_reason}). "
@@ -268,7 +288,7 @@ async def retry_generate_sql(
         "stream": False,
         "options": {
             "temperature": 0,
-            "num_predict": 1024,
+            "num_predict": 2048,
         },
     }
 
@@ -294,14 +314,16 @@ async def retry_generate_sql(
         logger.info(f"[sql_generator] Retry — got response ({len(response_text)} chars)")
         return response_text
 
-    # Fallback: extract from thinking
+    # Fallback: extract from thinking (strict regex: SELECT...FROM...;)
     if thinking_text:
         select_match = re.search(
-            r"(SELECT\s+.+?;)", thinking_text, re.DOTALL | re.IGNORECASE
+            r"(SELECT\s+\S+.+?\bFROM\b.+?;)",
+            thinking_text, re.DOTALL | re.IGNORECASE,
         )
         if select_match:
             extracted = select_match.group(1).strip()
-            logger.info(f"[sql_generator] Retry — extracted SQL from thinking")
-            return extracted
+            if len(extracted) <= 500:
+                logger.info(f"[sql_generator] Retry — extracted SQL from thinking")
+                return extracted
 
     raise RuntimeError("Retry returned empty response.")
