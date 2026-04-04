@@ -1,125 +1,200 @@
-# Afriquia / AlloGaz -- Plateforme Chatbot Multi-Agents
+# Afriquia / AlloGaz — Plateforme Chatbot Multi-Agents
 
-> Plateforme intelligente de chatbot multi-agents pour Afriquia/AlloGaz.
-> Ce projet est concu comme un MVP fonctionnel destine a evoluer vers un produit reel en production.
+Plateforme de chatbot multi-agents pour Afriquia/AlloGaz (distribution de carburants et gaz au Maroc). Un orchestrateur central (FastAPI + LangGraph) recoit les questions en langage naturel (francais) et les route vers des agents specialises : **SQL** (donnees structurees), **RAG** (documentation technique), **Location** (geolocalisation, actuellement en mock).
 
----
+Le coeur du systeme est un **pipeline adaptatif a 6 noeuds** qui s'ajuste selon la qualite des reponses : routing intelligent a 3 niveaux, appels paralleles, retry automatique, et clarification si necessaire.
 
-## Contexte
-
-### Contexte
-
-Ce projet constitue le coeur technique d'un portant sur la conception et le developpement d'une plateforme de chatbot multi-agents. L'objectif academique est de demontrer la faisabilite d'une architecture ou plusieurs agents specialises collaborent pour repondre a des questions en langage naturel, avec un pipeline adaptatif qui s'auto-ajuste selon la qualite des reponses.
-
-### Contexte produit
-
-Afriquia/AlloGaz est un acteur majeur de la distribution de carburants et gaz au Maroc. La plateforme vise a permettre aux clients et equipes internes d'interroger les donnees, documents et services Afriquia en langage naturel (francais), via un chatbot intelligent capable de :
-
-- consulter les **prix des carburants** et l'etat des **commandes** (donnees structurees)
-- repondre a des questions sur la **documentation technique** (normes, procedures, FAQ)
-- localiser les **stations-service** les plus proches (geolocalisation)
+Ce projet est un **MVP fonctionnel** developpe dans le cadre d'un PFE (Projet de Fin d'Etudes), concu des le depart pour evoluer vers un produit reel en production.
 
 ---
 
-## Objectifs du projet
+## Probleme metier et objectif
 
-1. **Concevoir une architecture multi-agents** modulaire ou chaque agent est independant et specialise
-2. **Implementer un pipeline adaptatif** (LangGraph) avec routing intelligent, retry et clarification
-3. **Developper un router hybride a 3 niveaux** minimisant le recours au LLM (regles > embeddings > LLM)
-4. **Realiser des agents fonctionnels** pour le SQL (donnees) et le RAG (documentation)
-5. **Valider l'approche MVP** avec des donnees de demonstration realistes
+Afriquia/AlloGaz est un acteur majeur de la distribution de carburants et gaz au Maroc. Ses clients et equipes internes ont besoin d'acceder rapidement a des informations variees :
+
+- **Donnees operationnelles** : prix des carburants, etat des commandes, reclamations, clients
+- **Documentation technique** : normes (EN590), fiches produits, procedures, FAQ
+- **Geolocalisation** : stations-service proches, itineraires
+
+L'approche multi-agents est pertinente ici car chaque type de question necessite un traitement fondamentalement different (requete SQL vs recherche vectorielle vs appel API). L'orchestrateur central permet de router intelligemment sans que l'utilisateur ait besoin de savoir quel agent interroger.
 
 ---
 
-## Architecture generale
+## Etat actuel du projet
+
+### Implemente et fonctionnel
+
+- **Orchestrateur** : pipeline LangGraph complet (6 noeuds, 2 conditional edges), router hybride L1+L2, cache Redis, circuit breaker, appels paralleles async
+- **SQL Agent** : pipeline NL-to-SQL complet (generation Ollama, nettoyage, validation, execution, retry intelligent, formatage hybride) + 6 mappings keyword en fallback
+- **RAG Agent** : pipeline retrieval-generation complet (Qdrant + Ollama), 42 chunks indexes depuis 6 documents
+- **Infrastructure** : Docker Compose (PostgreSQL, Redis, Ollama, Qdrant) operationnel
+- **Tests** : 67+ tests automatises (orchestrateur, SQL Agent, RAG Agent)
+- **Evaluation** : batterie de 20 questions SQL avec metriques
+
+### Partiellement implemente
+
+- **Router L3 (LLM fallback)** : stub — retourne `([], 0.0)`, le router se rabat sur le RAG par defaut
+- **Query Decomposer** : stub — chaque agent recoit la question complete (pas de decomposition multi-intent)
+- **Fusion multi-agents** : selection du meilleur score uniquement (pas de synthese LLM)
+
+### Prevu / prochaines etapes
+
+- **Location Agent reel** : actuellement mock (reponses statiques). Prevu : API de geocodage, donnees stations reelles
+- **Frontend React** : pas d'interface utilisateur. Interaction via curl / API
+- **Auth Gateway (Keycloak)** : pas d'authentification
+- **Back-office Django** : pas d'administration
+- **Support multilingue arabe** : non teste (le modele d'embeddings le supporte)
+
+### Tableau recapitulatif
+
+| Composant | Etat | Detail |
+|-----------|------|--------|
+| **Orchestrateur** | Fonctionnel | Pipeline LangGraph 6 noeuds, router L1+L2, cache Redis, circuit breaker |
+| **SQL Agent** | Fonctionnel | NL-to-SQL complet + retry + formatage hybride + 6 keyword fallbacks |
+| **RAG Agent** | Fonctionnel | Retrieval Qdrant (42 chunks) + generation Ollama qwen3:8b |
+| **Location Agent** | Mock | Reponses statiques uniquement (Casablanca, Rabat) |
+| **Frontend React** | Non commence | Pas d'interface — interaction via curl / API |
+| **Back-office Django** | Non commence | Pas d'administration |
+| **Auth Gateway (Keycloak)** | Non commence | Pas d'authentification — endpoints ouverts |
+
+---
+
+## Architecture
 
 ```
-                         Utilisateur
-                             |
-                     [ Orchestrateur ]
-                     FastAPI + LangGraph
-                      port 8000
-                             |
-           +-----------------+-----------------+
-           |                 |                 |
-     [ SQL Agent ]    [ RAG Agent ]    [ Location Agent ]
-      port 8006        port 8005        port 8010 (mock)
-           |                 |
-      PostgreSQL          Qdrant
-      (donnees)        (documents)
-           |                 |
-           +--------+--------+
-                    |
-                 Ollama
-              (qwen3:8b)
+                       Utilisateur (curl / API)
+                              |
+                    ┌─────────┴─────────┐
+                    │   Orchestrateur    │
+                    │ FastAPI + LangGraph│
+                    │    port 8000       │
+                    └────┬────┬────┬────┘
+                         │    │    │
+              ┌──────────┘    │    └──────────┐
+              │               │               │
+        ┌─────┴─────┐  ┌─────┴─────┐  ┌──────┴──────┐
+        │ SQL Agent  │  │ RAG Agent │  │  Location   │
+        │ port 8006  │  │ port 8005 │  │  port 8010  │
+        │ (NL-to-SQL)│  │(retrieval)│  │   (mock)    │
+        └─────┬──────┘  └──┬────┬──┘  └─────────────┘
+              │             │    │
+         PostgreSQL      Qdrant  Ollama
+         port 5433      port 6333  port 11434
+                                 (qwen3:8b)
+              │
+            Redis
+          port 6379
+          (cache)
 ```
 
 ### Pipeline LangGraph (6 noeuds)
 
 ```
 load_config
-     |
-   router ----[confiance < 0.40]----> clarification --> FIN
-     |
-parallel_calls
-     |
-   fusion ----[confiance < 0.35 + agents restants]----> retry_router --> router
-     |
+     │
+ route_query ──[confiance < 0.40]──> clarification ──> FIN
+     │
+call_agents   (appels HTTP paralleles aux agents selectionnes)
+     │
+fuse_responses ──[confiance < 0.35 + agents restants]──> retry_router ──> route_query
+     │
     FIN
 ```
 
-Le pipeline est **adaptatif** : le chemin d'execution depend de la qualite mesuree a chaque etape. Si le routage echoue, le systeme demande une clarification. Si la fusion donne une reponse de mauvaise qualite, il reessaie avec d'autres agents.
+Le pipeline est **adaptatif** : le chemin d'execution depend de la confiance mesuree a chaque etape.
 
 ---
 
-## Description des agents
+## Agents et responsabilites
 
 ### Orchestrateur (port 8000)
 
-Coeur du systeme. Recoit les requetes utilisateur et orchestre le pipeline complet :
+**Role** : Recevoir les requetes, router vers le bon agent, fusionner les reponses.
 
-- **Router hybride a 3 niveaux** :
-  - Niveau 1 -- Regles deterministes (< 1ms) : patterns regex/keywords par agent
-  - Niveau 2 -- Embeddings semantiques (~10ms) : modele multilingual MiniLM, similarite cosinus
-  - Niveau 3 -- LLM fallback : **stub actuel** (prevu pour v2)
-- **Appels paralleles** aux agents selectionnes via HTTP (asyncio.gather)
-- **Fusion** des reponses (strategie actuelle : meilleure confiance ; prevu v2 : synthese LLM)
-- **Retry** automatique si la confiance est trop basse (max 1 retry)
-- **Clarification** si aucun agent n'est identifie avec assez de confiance
-- **Cache Redis** des reponses (SHA256, TTL 5 min)
-- **Circuit breaker** par agent (3 echecs -> pause 60s)
+**Endpoint** : `POST /query` — recoit `{"query": "..."}`, retourne la reponse complete.
 
-### RAG Agent (port 8005)
+**Router hybride a 3 niveaux** :
 
-Agent fonctionnel complet specialise dans la documentation technique Afriquia :
+| Niveau | Methode | Latence | Seuil | Etat |
+|--------|---------|---------|-------|------|
+| L1 | Regles deterministes (regex/keywords) | < 1ms | >= 0.70 | Fonctionnel (20+ patterns) |
+| L2 | Embeddings semantiques (MiniLM) | ~10ms | >= 0.40 | Fonctionnel |
+| L3 | LLM fallback (Ollama) | ~1-2s | — | Stub (retourne vide) |
 
-- **Retriever** : recherche vectorielle dans Qdrant (top-k=4, seuil=0.35)
-- **Generator** : generation de reponse via Ollama qwen3:8b (temperature=0.1)
-- **Anti-hallucination** : prompt systeme strict, reponse "information non disponible" si hors contexte
-- **42 chunks indexes** a partir de 6 documents de demonstration (fiches carburant, normes, FAQ, procedures, securite)
-- **Embeddings** : paraphrase-multilingual-MiniLM-L12-v2 (384 dimensions, CPU, multilingual)
+**Fonctionnalites** : cache Redis (TTL 5 min), circuit breaker (3 echecs → pause 60s), retry (max 1), clarification.
+
+**Exemples de questions** :
+- "Quel est le prix du gazoil ?" → route vers SQL Agent
+- "Quelles sont les normes EN590 ?" → route vers RAG Agent
+- "Station proche de Casablanca" → route vers Location Agent
+
+---
 
 ### SQL Agent (port 8006)
 
-Agent fonctionnel specialise dans les donnees structurees :
+**Role** : Repondre aux questions sur les donnees structurees (prix, commandes, clients, reclamations).
 
-- **Pipeline NL-to-SQL** (strategie principale) :
-  1. Generation SQL via Ollama qwen3:8b (prompt avec schema + few-shot)
-  2. Nettoyage (extraction SELECT, suppression `<think>`, markdown)
-  3. Validation securite (SELECT only, tables autorisees, pas de sous-requetes)
-  4. Execution PostgreSQL via asyncpg
-  5. **Retry intelligent** : si erreur SQL corrigeable (syntaxe, colonne inconnue), 1 retry max avec le message d'erreur PostgreSQL injecte dans le prompt
-  6. **Formatage hybride** : templates Python (0-3 lignes) ou resume LLM (4+ lignes) avec fallback automatique
-- **Fallback keyword mapping** : 6 mappings pre-ecrits (prix, commandes, reclamations) utilises si NL-to-SQL echoue
-- **Base PostgreSQL** : 5 tables de demonstration (produits, clients, commandes, livraisons, reclamations)
-- **Securite** : utilisateur read-only `sql_agent_reader`, `statement_timeout`, auto-LIMIT, validation stricte
+**Endpoint** : `POST /query`
 
-### Location Agent (port 8010 -- mock)
+**Pipeline NL-to-SQL** (strategie principale) :
 
-Agent **non encore implemente**. Actuellement servi par le mock agent :
+```
+Question → generate_sql (Ollama) → clean_sql → validate_sql → execute_query
+                                                                    │
+                                                          ┌─────────┴─────────┐
+                                                         OK              Erreur SQL
+                                                          │            corrigeable ?
+                                                    format_answer     retry (1 max)
+                                                          │               │
+                                                       Reponse     clean → validate
+                                                                   → execute → format
+```
 
-- Retourne des reponses statiques realistes (stations Casablanca, Rabat)
-- Prevu v2 : appels API de geocodage, donnees stations reelles depuis `data/stations.json`
+**Fallback** : 6 mappings keyword pre-ecrits (prix gazoil, prix essence, tous les prix, commandes en livraison, repartition commandes, reclamations ouvertes).
+
+**Base de donnees** : 5 tables de demonstration — `produits` (6 lignes), `clients` (8), `commandes` (18), `livraisons` (10), `reclamations` (5).
+
+**Securite** : utilisateur read-only, validation stricte (SELECT uniquement, tables autorisees, pas de sous-requetes), `statement_timeout`, auto-LIMIT 50.
+
+**Exemples de questions** :
+- "Quel est le prix du gazoil ?" → SELECT sur produits
+- "Quels clients habitent a Casablanca ?" → SELECT avec WHERE
+- "Combien de commandes par statut ?" → GROUP BY avec COUNT
+- "Quel client a le plus depense ?" → JOIN + SUM + ORDER BY + LIMIT
+
+---
+
+### RAG Agent (port 8005)
+
+**Role** : Repondre aux questions sur la documentation technique Afriquia.
+
+**Endpoint** : `POST /query`
+
+**Pipeline** : Question → embeddings MiniLM → recherche Qdrant (top-3, seuil 0.40) → generation Ollama qwen3:8b.
+
+**Documents indexes** (42 chunks depuis 6 fichiers) :
+- Fiche Gazoil 50 ppm, Fiche Essence Super
+- Norme EN590 (diesel)
+- Procedure de commande gaz
+- Regles de securite et stockage
+- FAQ Afriquia
+
+**Exemples de questions** :
+- "Quelles sont les normes EN590 pour le diesel ?"
+- "Comment commander du gaz ?"
+- "Quelles sont les regles de securite pour le stockage ?"
+
+---
+
+### Location Agent (port 8010 — mock)
+
+**Role** : Localiser les stations-service proches.
+
+**Etat actuel** : mock agent avec reponses statiques (Casablanca, Rabat).
+
+**Endpoint** : `POST /location/query`
+
+**Prevu** : API de geocodage reelle, donnees stations depuis `data/stations.json`.
 
 ---
 
@@ -127,52 +202,17 @@ Agent **non encore implemente**. Actuellement servi par le mock agent :
 
 | Composant | Technologie | Role |
 |-----------|-------------|------|
-| Orchestrateur | FastAPI + LangGraph | Pipeline adaptatif multi-agents |
-| Agents | FastAPI | Microservices specialises |
-| LLM | Ollama + qwen3:8b | NL-to-SQL, generation RAG, formatage SQL, fusion |
-| Embeddings | sentence-transformers MiniLM-L12-v2 | Routing semantique + RAG retrieval |
-| Base vectorielle | Qdrant | Stockage et recherche de documents |
-| Base relationnelle | PostgreSQL 16 | Donnees structurees (produits, commandes) |
-| Cache | Redis 7 | Cache des reponses et configurations |
-| Configuration | Pydantic Settings + .env | Parametrage centralise |
-| Logs | Loguru | Logging structure |
-| Tests | pytest + pytest-asyncio | Tests unitaires et d'integration |
-| Infrastructure | Docker Compose | PostgreSQL, Redis, Ollama, Qdrant |
-
----
-
-## Etat actuel du projet
-
-### Fonctionnalites disponibles
-
-- [x] Pipeline LangGraph complet a 6 noeuds avec conditional edges
-- [x] Router hybride L1 (regles) + L2 (embeddings) fonctionnels et calibres
-- [x] RAG Agent complet : ingestion, retrieval, generation avec anti-hallucination
-- [x] SQL Agent : pipeline NL-to-SQL complet (generation, nettoyage, validation, execution)
-- [x] SQL Agent : retry intelligent (1 tentative max sur erreurs SQL corrigeables)
-- [x] SQL Agent : formateur hybride (templates simples + resume LLM avec fallback)
-- [x] SQL Agent : 6 mappings keyword pre-ecrits en fallback
-- [x] Cache Redis des reponses avec invalidation
-- [x] Circuit breaker par agent
-- [x] Appels paralleles aux agents (asyncio.gather)
-- [x] Retry automatique si confiance insuffisante
-- [x] Clarification si routage echoue
-- [x] Mock agent pour les tests d'integration
-- [x] Suite de tests (orchestrateur 11+ tests, SQL Agent 60 tests, RAG 10 tests)
-- [x] Infrastructure Docker Compose (PostgreSQL, Redis, Ollama, Qdrant)
-
-### Limitations actuelles / ce qui est encore MVP
-
-- [ ] **L3 LLM fallback** : stub (retourne [], 0.0) -- le router se rabat sur le RAG par defaut
-- [ ] **Query Decomposer** : stub (passthrough) -- chaque agent recoit la question complete
-- [ ] **Fusion multi-agents** : selection du meilleur score -- pas encore de synthese LLM
-- [x] ~~**SQL Agent** : 6 mappings keyword fixes -- pas encore de NL-to-SQL generatif~~ (implemente)
-- [ ] **Location Agent** : entierement mocke -- pas de donnees ni d'API de geolocalisation reelles
-- [ ] **data/stations.json** : fichier vide (placeholder)
-- [ ] **Pas d'authentification** : pas de Keycloak/Auth Gateway (prevu dans l'architecture cible)
-- [ ] **Pas de frontend** : pas d'interface React (prevu dans l'architecture cible)
-- [ ] **Pas de back-office Django** : pas d'admin dashboard (prevu dans l'architecture cible)
-- [ ] **Monolingue francais** : le support arabe n'est pas encore teste
+| Orchestration | FastAPI + LangGraph 0.2 | Pipeline adaptatif multi-agents |
+| Agents | FastAPI 0.115 | Microservices HTTP independants |
+| LLM | Ollama + qwen3:8b (local) | NL-to-SQL, generation RAG, formatage |
+| Embeddings | sentence-transformers MiniLM-L12-v2 | Routing semantique + RAG retrieval (384 dims, multilingual) |
+| Base vectorielle | Qdrant 1.11 | Stockage et recherche de documents |
+| Base relationnelle | PostgreSQL 16 + asyncpg | Donnees structurees (5 tables) |
+| Cache | Redis 7 | Cache des reponses (SHA256, TTL 5 min) |
+| Configuration | Pydantic Settings + .env | Parametrage par service |
+| Logs | Loguru | Logging structure dans tous les services |
+| Tests | pytest + pytest-asyncio | 67+ tests unitaires et d'integration |
+| Infrastructure | Docker Compose | 4 services containerises |
 
 ---
 
@@ -180,86 +220,81 @@ Agent **non encore implemente**. Actuellement servi par le mock agent :
 
 ```
 afriquia-multiagent-chatbot/
-|
-|-- docker-compose.yml              # Infrastructure (PostgreSQL, Redis, Ollama, Qdrant)
-|-- .env / .env.example             # Variables d'environnement
-|
-|-- orchestrator/                   # Orchestrateur principal
-|   |-- app/
-|   |   |-- main.py                 # FastAPI : POST /query, GET /health
-|   |   |-- config.py               # Seuils et parametres (Pydantic Settings)
-|   |   |-- graph.py                # Pipeline LangGraph (6 noeuds)
-|   |   |-- state.py                # OrchestratorState (TypedDict, 17 champs)
-|   |   |-- router/
-|   |   |   |-- __init__.py         # HybridRouter (cascade L1 > L2 > L3)
-|   |   |   |-- rules.py           # L1 : regles keyword/regex
-|   |   |   |-- intent_rules.py    # Patterns par agent
-|   |   |   |-- embeddings.py      # L2 : similarite cosinus
-|   |   |   |-- llm_fallback.py    # L3 : stub (prevu v2)
-|   |   |-- nodes/                  # Noeuds LangGraph
-|   |   |-- services/               # Redis cache, circuit breaker, decomposer
-|   |   |-- models/                 # Schemas Pydantic
-|   |-- agents_config.json          # Configuration des agents (type, host, port, path)
-|   |-- tests/
-|   |-- requirements.txt
-|
-|-- agents/
-|   |-- rag_agent/                  # Agent RAG fonctionnel
-|   |   |-- app/                    # FastAPI : POST /query
-|   |   |   |-- services/           # retriever, generator, embedder, ollama, qdrant
-|   |   |-- ingestion/              # Pipeline d'ingestion (chunker, preprocessor, ingest)
-|   |   |-- scripts/                # Scripts de test manuels
-|   |   |-- tests/
-|   |
-|   |-- sql_agent/                  # Agent SQL (NL-to-SQL + keyword fallback)
-|   |   |-- app/                    # FastAPI : POST /query
-|   |   |   |-- services/           # database, sql_generator, sql_cleaner, sql_validator, formatter
-|   |   |-- scripts/                # Scripts de test manuels (test_generator)
-|   |   |-- tests/                  # 60 tests (agent, formatter, cleaner, validator)
-|   |
-|   |-- mock_agent/                 # Agent mock (3 endpoints pour tests)
-|       |-- app/main.py             # /sql/query, /rag/query, /location/query
-|
-|-- data/
-|   |-- demo_db.sql                 # Schema + donnees de demonstration PostgreSQL
-|   |-- documents/                  # 6 documents techniques (fiches, normes, FAQ)
-|   |-- stations.json               # Placeholder (vide)
-|
-|-- docs/
-    |-- guide.md                    # Guide de presentation pour l'encadrant
+├── docker-compose.yml                # PostgreSQL 5433, Redis 6379, Ollama 11434, Qdrant 6333
+├── .env / .env.example               # Variables d'environnement
+├── CLAUDE.md                         # Guide pour Claude Code (commandes, patterns, gotchas)
+│
+├── orchestrator/                     # Orchestrateur (port 8000)
+│   ├── app/
+│   │   ├── main.py                   # POST /query, GET /health
+│   │   ├── config.py                 # Seuils routing, timeout agents (30s)
+│   │   ├── graph.py                  # Pipeline LangGraph (6 noeuds)
+│   │   ├── state.py                  # OrchestratorState (17 champs)
+│   │   ├── router/                   # HybridRouter (L1 regles, L2 embeddings, L3 stub)
+│   │   ├── nodes/                    # load_config, router, parallel_calls, fusion, retry, clarification
+│   │   └── services/                 # Redis cache, circuit breaker, decomposer
+│   ├── agents_config.json            # Configuration des 3 agents (type, host, port, path)
+│   └── tests/                        # 4 fichiers de tests
+│
+├── agents/
+│   ├── sql_agent/                    # Agent SQL (port 8006)
+│   │   ├── app/
+│   │   │   ├── main.py               # Pipeline : NL-to-SQL → keyword fallback → unsupported
+│   │   │   └── services/             # sql_generator, sql_cleaner, sql_validator, formatter, database
+│   │   ├── scripts/
+│   │   │   ├── eval_sql.py           # Batterie de 20 questions (5 categories)
+│   │   │   └── test_generator.py     # Test manuel du generateur
+│   │   └── tests/                    # 4 fichiers, 67+ tests
+│   │
+│   ├── rag_agent/                    # Agent RAG (port 8005)
+│   │   ├── app/
+│   │   │   └── services/             # retriever, generator, embedder, qdrant_client
+│   │   ├── ingestion/                # ingest.py, chunker.py, preprocessor.py
+│   │   └── tests/
+│   │
+│   └── mock_agent/                   # Agent Location mock (port 8010)
+│       └── app/main.py               # Reponses statiques
+│
+├── data/
+│   ├── demo_db.sql                   # Schema + donnees demo (5 tables, ~47 lignes)
+│   ├── documents/                    # 6 fichiers texte pour le RAG
+│   └── stations.json                 # Placeholder vide (prevu Location v2)
+│
+└── docs/
+    └── guide.md                      # Guide de presentation PFE
 ```
 
 ---
 
-## Guide de demarrage local
+## Guide de demarrage rapide
 
 ### Prerequis
 
 - **Python 3.10+**
 - **Docker Desktop** (avec Docker Compose)
 - **Git**
-- **~4 Go d'espace disque** (modeles Ollama + embeddings)
-- **GPU optionnel** (Ollama fonctionne aussi en CPU, plus lent)
+- **~5 Go d'espace disque** (modele qwen3:8b + embeddings)
+- **GPU optionnel** — Ollama fonctionne en CPU (plus lent, ~15-20s par requete LLM au lieu de ~5s)
 
-### Etape 1 -- Infrastructure Docker
+### Etape 1 — Infrastructure Docker
 
 ```bash
 cd afriquia-multiagent-chatbot
 docker compose up -d
 ```
 
-Cela demarre :
-- **PostgreSQL** sur le port `5433` (attention : pas 5432, pour eviter un conflit avec un PostgreSQL local)
-- **Redis** sur le port `6379`
-- **Ollama** sur le port `11434`
-- **Qdrant** sur le port `6333`
+Cela demarre 4 services :
 
-Verifier :
-```bash
-docker compose ps
-```
+| Service | Port | Verification |
+|---------|------|-------------|
+| PostgreSQL | 5433 | `docker exec afriquia-postgres pg_isready -U afriquia` |
+| Redis | 6379 | `docker exec afriquia-redis redis-cli ping` → `PONG` |
+| Ollama | 11434 | `curl http://localhost:11434/api/tags` |
+| Qdrant | 6333 | `curl http://localhost:6333/collections` |
 
-### Etape 2 -- Charger le modele Ollama
+> **Attention** : PostgreSQL est sur le port **5433** (pas 5432) pour eviter les conflits avec une installation locale.
+
+### Etape 2 — Charger le modele LLM
 
 ```bash
 docker exec afriquia-ollama ollama pull qwen3:8b
@@ -267,15 +302,21 @@ docker exec afriquia-ollama ollama pull qwen3:8b
 
 > Premiere execution : ~5 Go a telecharger. Les lancements suivants sont instantanes.
 
-### Etape 3 -- Initialiser la base PostgreSQL
+### Etape 3 — Initialiser la base PostgreSQL
 
 ```bash
 docker exec -i afriquia-postgres psql -U afriquia -d chatbot_db < data/demo_db.sql
 ```
 
-Cela cree les tables (produits, clients, commandes, livraisons, reclamations), insere les donnees de demonstration, et cree l'utilisateur read-only `sql_agent_reader`.
+Cela cree 5 tables (produits, clients, commandes, livraisons, reclamations), insere les donnees de demonstration, et cree l'utilisateur read-only `sql_agent_reader`.
 
-### Etape 4 -- Indexer les documents RAG
+Verifier :
+```bash
+docker exec afriquia-postgres psql -U afriquia -d chatbot_db -c "SELECT COUNT(*) FROM produits;"
+# count = 6
+```
+
+### Etape 4 — Indexer les documents RAG
 
 ```bash
 cd agents/rag_agent
@@ -285,49 +326,98 @@ python -m ingestion.ingest
 
 > Premiere execution : telecharge le modele d'embeddings (~120 Mo). Indexe 42 chunks dans Qdrant.
 
-### Etape 5 -- Lancer les services (4 terminaux)
+### Etape 5 — Lancer les 4 services (4 terminaux)
 
-**Terminal 1 -- SQL Agent (port 8006)**
 ```bash
-cd agents/sql_agent
-pip install -r requirements.txt
+# Terminal 1 — SQL Agent
+cd agents/sql_agent && pip install -r requirements.txt
 uvicorn app.main:app --port 8006 --reload
-```
 
-**Terminal 2 -- RAG Agent (port 8005)**
-```bash
+# Terminal 2 — RAG Agent
 cd agents/rag_agent
 uvicorn app.main:app --port 8005 --reload
-```
 
-**Terminal 3 -- Mock Agent / Location (port 8010)**
-```bash
-cd agents/mock_agent
-pip install -r requirements.txt
+# Terminal 3 — Mock Agent (Location)
+cd agents/mock_agent && pip install -r requirements.txt
 uvicorn app.main:app --port 8010 --reload
-```
 
-**Terminal 4 -- Orchestrateur (port 8000)**
-```bash
-cd orchestrator
-pip install -r requirements.txt
+# Terminal 4 — Orchestrateur
+cd orchestrator && pip install -r requirements.txt
 uvicorn app.main:app --port 8000 --reload
 ```
 
-### Etape 6 -- Verifier
+### Etape 6 — Verifier que tout repond
 
 ```bash
-curl http://localhost:8000/health
-# {"status": "ok"}
+curl http://localhost:8006/health   # SQL Agent    → {"status": "ok"}
+curl http://localhost:8005/health   # RAG Agent    → {"status": "ok"}
+curl http://localhost:8010/health   # Mock Agent   → {"status": "ok"}
+curl http://localhost:8000/health   # Orchestrateur → {"status": "ok"}
 ```
+
+### Windows / PowerShell — Demarrage rapide depuis VS Code
+
+Ouvrir 4 terminaux dans VS Code (`Ctrl+Shift+``) et lancer :
+
+```powershell
+# Terminal 1 — SQL Agent
+cd agents\sql_agent; pip install -r requirements.txt; uvicorn app.main:app --port 8006 --reload
+
+# Terminal 2 — RAG Agent
+cd agents\rag_agent; pip install -r requirements.txt; uvicorn app.main:app --port 8005 --reload
+
+# Terminal 3 — Mock Agent
+cd agents\mock_agent; pip install -r requirements.txt; uvicorn app.main:app --port 8010 --reload
+
+# Terminal 4 — Orchestrateur
+cd orchestrator; pip install -r requirements.txt; uvicorn app.main:app --port 8000 --reload
+```
+
+Verification rapide en PowerShell :
+
+```powershell
+Invoke-RestMethod http://localhost:8006/health
+Invoke-RestMethod http://localhost:8005/health
+Invoke-RestMethod http://localhost:8010/health
+Invoke-RestMethod http://localhost:8000/health
+```
+
+Test d'une requete :
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/query `
+  -ContentType "application/json" `
+  -Body '{"query": "Quel est le prix du gazoil ?"}' | ConvertTo-Json -Depth 5
+```
+
+> **Astuce VS Code** : utiliser le bouton "Split Terminal" pour voir les 4 services cote a cote.
+
+---
+
+## Variables d'environnement
+
+Le fichier `.env` (racine du projet) contient :
+
+```env
+POSTGRES_PASSWORD=afriquia_dev
+POSTGRES_DB=chatbot_db
+POSTGRES_USER=afriquia
+REDIS_URL=redis://localhost:6379
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
+```
+
+Chaque service charge sa configuration via Pydantic `BaseSettings` avec `env_file=".env"`. Les valeurs par defaut sont suffisantes pour le developpement local.
+
+Le SQL Agent utilise en plus un utilisateur read-only (`sql_agent_reader` / `reader_afriquia_2025`) cree par `demo_db.sql`.
 
 ---
 
 ## Exemples de requetes
 
-Toutes les requetes passent par l'orchestrateur (port 8000) qui route automatiquement vers le bon agent.
+Toutes les requetes passent par l'orchestrateur (port 8000) qui route automatiquement.
 
-### Requete SQL -- Prix du gazoil
+### SQL — Prix du gazoil
 
 ```bash
 curl -s -X POST http://localhost:8000/query \
@@ -335,19 +425,19 @@ curl -s -X POST http://localhost:8000/query \
   -d '{"query": "Quel est le prix du gazoil ?"}' | python -m json.tool
 ```
 
-Reponse attendue : `"agents_used": ["sql"]`, prix reel depuis PostgreSQL (12.45 MAD/L).
+Reponse attendue : `"agents_used": ["sql"]`, prix depuis PostgreSQL.
 
-### Requete SQL -- Reclamations ouvertes
+### SQL — Question complexe
 
 ```bash
 curl -s -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "Quelles sont les reclamations ouvertes ?"}' | python -m json.tool
+  -d '{"query": "Quel client a le plus depense en commandes non annulees ?"}' | python -m json.tool
 ```
 
-Reponse attendue : `"agents_used": ["sql"]`, liste des reclamations avec noms de clients.
+Reponse attendue : `"agents_used": ["sql"]`, resultat avec JOIN + aggregation.
 
-### Requete RAG -- Documentation technique
+### RAG — Documentation technique
 
 ```bash
 curl -s -X POST http://localhost:8000/query \
@@ -355,9 +445,9 @@ curl -s -X POST http://localhost:8000/query \
   -d '{"query": "Quelles sont les normes EN590 pour le diesel ?"}' | python -m json.tool
 ```
 
-Reponse attendue : `"agents_used": ["rag"]`, reponse generee a partir des documents indexes.
+Reponse attendue : `"agents_used": ["rag"]`, reponse generee depuis les documents.
 
-### Requete Location -- Station proche
+### Location — Station proche (mock)
 
 ```bash
 curl -s -X POST http://localhost:8000/query \
@@ -365,68 +455,167 @@ curl -s -X POST http://localhost:8000/query \
   -d '{"query": "Station Afriquia proche de Casablanca"}' | python -m json.tool
 ```
 
-Reponse attendue : `"agents_used": ["location"]`, reponse du mock agent.
+Reponse attendue : `"agents_used": ["location"]`, reponse statique du mock.
+
+### Cas limite — Hors perimetre
+
+```bash
+curl -s -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Quel est le code Wi-Fi de la station ?"}' | python -m json.tool
+```
+
+Reponse attendue : message indiquant que la question est hors perimetre.
+
+### Agent SQL en direct (sans orchestrateur)
+
+```bash
+curl -s -X POST http://localhost:8006/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Quels clients habitent a Casablanca ?"}' | python -m json.tool
+```
 
 ---
 
 ## Tests
 
+### Tests unitaires et d'integration
+
 ```bash
-# Tests orchestrateur (unitaires + integration)
-cd orchestrator
-pytest tests/ -v
+# Orchestrateur (11+ tests)
+cd orchestrator && python -m pytest tests/ -v
 
-# Tests RAG Agent
-cd agents/rag_agent
-pytest tests/ -v
+# SQL Agent (67+ tests : agent, cleaner, validator, formatter)
+cd agents/sql_agent && python -m pytest tests/ -v
 
-# Tests SQL Agent
-cd agents/sql_agent
-pytest tests/ -v
+# RAG Agent (10+ tests)
+cd agents/rag_agent && python -m pytest tests/ -v
 ```
+
+### Evaluation SQL (batterie de 20 questions)
+
+Le script `eval_sql.py` lance 20 questions reparties en 5 categories contre le SQL Agent en HTTP :
+
+```bash
+# Le SQL Agent doit tourner sur le port 8006
+cd agents/sql_agent
+python -m scripts.eval_sql
+```
+
+**Categories** :
+- **A** — Lecture simple (SELECT + WHERE, 1 table)
+- **B** — Aggregation (COUNT, SUM, AVG, GROUP BY)
+- **C** — Jointure (JOIN entre 2 tables)
+- **D** — Complexe (aggregation + jointure + filtre)
+- **E** — Cas limites (hors perimetre, 0 resultat)
+
+Le script affiche un tableau par categorie avec strategy, confidence, rows, SQL genere et reponse. Le resume final donne les taux de nl_to_sql vs fallback vs unsupported.
+
+### Resultats d'evaluation actuels
+
+Derniere execution de `eval_sql.py` sur les 20 questions :
+
+| Metrique | Valeur |
+|----------|--------|
+| Questions totales | 20 |
+| NL-to-SQL reussies | 18/20 |
+| Taux NL-to-SQL | **95%** |
+| Fallback keyword | 0 |
+| Unsupported (normal) | 1 (question hors perimetre, comportement attendu) |
+| Timeout | 1 (C3 — jointure complexe, passe en test isole mais timeout en evaluation sequentielle) |
+
+> **Note** : le cas C3 (jointure complexe) reussit systematiquement en test isole (`test_generator --http`). Le timeout survient uniquement lors de l'evaluation sequentielle des 20 questions, quand le modele est deja charge en memoire et traite les requetes en serie. Ce n'est pas un bug fonctionnel mais une contrainte de performance du LLM local.
 
 ---
 
 ## Seuils et parametres cles
 
-| Parametre | Valeur | Role |
-|-----------|--------|------|
-| `rules_threshold` | 0.70 | Score minimum pour valider le routage L1 (regles) |
-| `embed_threshold` | 0.40 | Score minimum pour valider le routage L2 (embeddings) |
-| `routing_confidence_min` | 0.40 | En dessous : demander clarification |
-| `fusion_confidence_min` | 0.35 | En dessous : retry avec d'autres agents |
-| `max_retries` | 1 | Maximum 1 retry pour eviter les boucles |
+| Parametre | Valeur | Fichier | Role |
+|-----------|--------|---------|------|
+| `rules_threshold` | 0.70 | orchestrator/app/config.py | Score L1 minimum pour router |
+| `embed_threshold` | 0.40 | orchestrator/app/config.py | Score L2 minimum |
+| `routing_confidence_min` | 0.40 | orchestrator/app/config.py | En dessous : clarification |
+| `fusion_confidence_min` | 0.35 | orchestrator/app/config.py | En dessous : retry |
+| `agent_timeout` | 30s | orchestrator/app/config.py | Timeout HTTP par agent |
+| `max_retries` | 1 | orchestrator/app/config.py | Retry orchestrateur |
+| `num_predict` | 2048 | agents/sql_agent/.../sql_generator.py | Budget tokens Ollama (NL-to-SQL) |
+| `query_timeout` | 5s | agents/sql_agent/app/config.py | Timeout PostgreSQL |
+| `max_rows` | 50 | agents/sql_agent/app/config.py | LIMIT auto |
+| `cache_ttl` | 300s | orchestrator + rag_agent | TTL Redis |
 
 ---
 
-## Roadmap / Prochaines etapes
+## Limites actuelles
 
-### Court terme (MVP+)
+- **Latence LLM** : qwen3:8b en local prend 10-20s par requete en CPU. Un GPU reduit a ~3-5s. Le pipeline NL-to-SQL complet (generation + execution + formatage) peut atteindre 30s.
+- **Thinking mode** : qwen3:8b utilise un raisonnement interne (`<think>`) qui consomme des tokens. Si la requete est complexe, le `response` peut etre vide — le pipeline gere ce cas mais la requete est alors perdue.
+- **Location Agent** : entierement mock. Pas de donnees reelles ni d'API de geocodage.
+- **Router L3** : stub. Les requetes ambigues qui passent L1 et L2 sont routees vers RAG par defaut.
+- **Fusion** : selection du meilleur score. Pas de synthese intelligente quand plusieurs agents repondent.
+- **Pas de frontend** : toute interaction se fait via curl ou outil HTTP.
+- **Pas d'authentification** : les endpoints sont ouverts.
+- **Donnees de demonstration** : 47 lignes dans PostgreSQL, 42 chunks dans Qdrant. Non representatif d'un volume production.
+- **Monolingue** : teste en francais uniquement (le modele d'embeddings supporte l'arabe).
 
-- [x] ~~Implementer le **NL-to-SQL generatif** dans le SQL Agent~~ (implemente : generation, nettoyage, validation, retry, formatage hybride)
-- [ ] Implementer le **Location Agent reel** (API de geocodage, donnees stations)
-- [ ] Activer le **L3 LLM fallback** dans le router (Ollama pour les cas ambigus)
-- [ ] Implementer la **fusion LLM** pour les reponses multi-agents
+### Limite connue — Performance LLM local
 
-### Moyen terme (v2)
+Le modele qwen3:8b tourne en local via Ollama. En CPU (pas de GPU), chaque appel LLM prend **10-20 secondes**. Le pipeline NL-to-SQL complet (generation + nettoyage + validation + execution + formatage) peut atteindre **25-30 secondes** pour une requete complexe.
 
-- [ ] **Query Decomposer** : decomposition LLM des questions multi-intent
-- [ ] **Auth Gateway** (FastAPI + Keycloak) pour l'authentification JWT
-- [ ] **Back-office Django** pour l'administration des chatbots et agents
-- [ ] **Frontend React** avec interface de chat
-- [ ] Support **multilingue arabe** (le modele d'embeddings le supporte deja)
+Les requetes avec jointures multiples (categorie C et D de l'evaluation) sont les plus couteuses. En particulier, **C3** (jointure + aggregation) passe systematiquement en test isole mais peut depasser le timeout de 30 secondes lors d'une evaluation sequentielle, car le modele est sollicite en continu sans pause entre les questions.
 
-### Long terme (production)
+Avec un **GPU** (meme modeste), la latence tombe a **3-5 secondes** par appel LLM, et le timeout n'est plus un probleme.
 
-- [ ] Cache multi-niveaux avec TTL adaptatifs par type de donnee
-- [ ] Monitoring et observabilite (metriques, alertes)
+---
+
+## Roadmap
+
+### Court terme — Stabilisation
+
+- [ ] Optimiser la latence du pipeline NL-to-SQL (prompt plus court, modele plus leger)
+- [ ] Implementer le Location Agent reel (API geocodage + donnees stations)
+- [ ] Activer le L3 LLM fallback dans le router
+- [ ] Implementer la fusion LLM pour les reponses multi-agents
+
+### Moyen terme — Enrichissement
+
+- [ ] Query Decomposer : decomposition LLM des questions multi-intent
+- [ ] Frontend React avec interface de chat
+- [ ] Auth Gateway (FastAPI + Keycloak) pour l'authentification JWT
+- [ ] Back-office Django pour l'administration
+
+### Long terme — Production
+
 - [ ] Deploiement containerise complet (Docker Compose production ou Kubernetes)
+- [ ] Monitoring et observabilite (metriques, alertes, tracing)
+- [ ] Support multilingue arabe
 - [ ] Tests de charge et optimisation des performances
 
 ---
 
-## Note importante
+## Reprendre le projet
 
-Ce projet est un **MVP fonctionnel** qui demontre l'architecture et les mecanismes cles du systeme multi-agents. Il n'est pas un produit fini. Les donnees utilisees sont des donnees de demonstration, et plusieurs composants sont encore en version simplifiee (stubs) dans l'attente d'une implementation complete. L'architecture est concue des le depart pour permettre cette evolution progressive sans refactoring majeur.
+Pour un developpeur qui decouvre le codebase :
+
+**Lire en premier** :
+1. Ce README
+2. `CLAUDE.md` — contient les commandes, patterns de code, gotchas et astuces de debugging
+3. `orchestrator/app/graph.py` — le pipeline LangGraph (point d'entree logique)
+4. `orchestrator/app/router/intent_rules.py` — les regles de routing L1
+5. `agents/sql_agent/app/main.py` — le pipeline SQL complet
+
+**Points d'entree HTTP** :
+- Orchestrateur : `orchestrator/app/main.py` → `POST /query`
+- SQL Agent : `agents/sql_agent/app/main.py` → `POST /query`
+- RAG Agent : `agents/rag_agent/app/main.py` → `POST /query`
+
+**Configuration des agents** : `orchestrator/agents_config.json` (type, host, port, path, description).
+
+**Tests** : chaque service a ses tests dans `tests/`. Lancer `python -m pytest tests/ -v` depuis le dossier du service.
+
+---
+
+## Contexte
+
+Projet de Fin d'Etudes (PFE) — Conception et developpement d'une plateforme de chatbot multi-agents pour Afriquia/AlloGaz. L'objectif academique est de demontrer la faisabilite d'une architecture ou plusieurs agents specialises collaborent pour repondre a des questions en langage naturel, avec un pipeline adaptatif qui s'auto-ajuste selon la qualite des reponses.
 
 ---
